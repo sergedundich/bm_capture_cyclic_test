@@ -1,7 +1,7 @@
 #include <comutil.h>
 #include "DeckLinkAPI.h"
 
-//#define DISABLE_CUSTOM_ALLOCATOR
+#define DISABLE_CUSTOM_ALLOCATOR
 //#define DISABLE_INPUT_CALLBACK
 const BMDDisplayMode g_mode = bmdModePAL;
 
@@ -23,8 +23,29 @@ inline void WaitSec( unsigned duration_sec )
     Sleep( duration_sec*1000 );
 }
 
+inline IDeckLinkIterator* CreateDeckLinkIteratorInstance()
+{
+    LPVOID  p = NULL;
+    HRESULT  hr = CoCreateInstance(
+                                    CLSID_CDeckLinkIterator,  NULL,  CLSCTX_ALL,
+                                    IID_IDeckLinkIterator,  &p
+                                    );
+
+    if ( FAILED(hr) )
+    {
+        return NULL;
+    }
+
+    assert( p != NULL );
+    return  static_cast<IDeckLinkIterator*>(p);
+}
+
 #elif defined(__APPLE__)
+//=====================================================================================================================
+#define STDMETHODCALLTYPE
+
 //---------------------------------------------------------------------------------------------------------------------
+#include <string.h>
 #include <sys/time.h>
 
 const long SystemTimeSec = 1000000;
@@ -41,10 +62,29 @@ inline void WaitSec( unsigned duration_sec )
     sleep(duration_sec);
 }
 
-#else
 //---------------------------------------------------------------------------------------------------------------------
+const REFIID IID_IUnknown = CFUUIDGetUUIDBytes(IUnknownUUID);
+
+//---------------------------------------------------------------------------------------------------------------------
+inline bool IsEqualGUID( const CFUUIDBytes& a, const CFUUIDBytes& b )
+{
+    return memcmp( &a, &b, sizeof(CFUUIDBytes) ) == 0;
+}
+
+#elif defined(__linux__)
+#include <string.h>
 #include <time.h>
 
+//=====================================================================================================================
+#define STDMETHODCALLTYPE
+
+//---------------------------------------------------------------------------------------------------------------------
+inline bool IsEqualGUID( const REFIID& a, const REFIID& b )
+{
+    return memcmp( &a, &b, sizeof(REFIID) ) == 0;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 const long SystemTimeSec = 10000000;
 
 inline long long GetSystemTime()
@@ -59,56 +99,8 @@ inline void WaitSec( unsigned duration_sec )
     sleep(duration_sec);
 }
 
-#endif
-
-#include <DeckLinkAPI.h>
-
-#if defined(__APPLE__)
-#include <string.h>
-
-//=====================================================================================================================
-#define STDMETHODCALLTYPE
-
-//---------------------------------------------------------------------------------------------------------------------
-const REFIID IID_IUnknown = CFUUIDGetUUIDBytes(IUnknownUUID);
-
-//---------------------------------------------------------------------------------------------------------------------
-inline bool IsEqualGUID( const CFUUIDBytes& a, const CFUUIDBytes& b )
-{
-    return memcmp( &a, &b, sizeof(CFUUIDBytes) ) == 0;
-}
-
-#elif defined(__linux__)
-#include <string.h>
-
-//=====================================================================================================================
-#define STDMETHODCALLTYPE
-
-//---------------------------------------------------------------------------------------------------------------------
-inline bool IsEqualGUID( const REFIID& a, const REFIID& b )
-{
-    return memcmp( &a, &b, sizeof(REFIID) ) == 0;
-}
-#endif
-
-#ifdef _WIN32
-//=====================================================================================================================
-inline IDeckLinkIterator* CreateDeckLinkIteratorInstance()
-{
-    LPVOID  p = NULL;
-    HRESULT  hr = CoCreateInstance(
-                CLSID_CDeckLinkIterator,  NULL,  CLSCTX_ALL,
-                IID_IDeckLinkIterator,  &p
-                );
-
-    if ( FAILED(hr) )
-    {
-        return NULL;
-    }
-
-    assert( p != NULL );
-    return  static_cast<IDeckLinkIterator*>(p);
-}
+#else
+#error "Unsupported OS"
 #endif
 
 //=====================================================================================================================
@@ -145,6 +137,7 @@ public:
     virtual ULONG STDMETHODCALLTYPE Release(void);
 };
 
+//---------------------------------------------------------------------------------------------------------------------
 const char* DisplayModeName( BMDDisplayMode displayModeId )
 {
     switch(displayModeId)
@@ -244,6 +237,7 @@ HRESULT STDMETHODCALLTYPE InputCallback::VideoInputFormatChanged(
                         ( flags & bmdDetectedVideoInputRGB444 ? "RGB " : "" ),
                         ( flags & bmdDetectedVideoInputDualStream3D ? "3D " : "" )
                         );
+
     return S_OK;
 }
 
@@ -480,10 +474,10 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
                     }
                     else
                     {
-                        for( unsigned n = 5; n; --n )
+                        for( unsigned n = 20; n; --n )
                         {
                             printf( "Video+Audio Capture remaining %u sec...\n", n );
-                            Sleep(1000);
+                            WaitSec(1);
                         }
 
                         printf("input->StopStreams...\n");
@@ -521,7 +515,7 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
         }
 
 #ifndef DISABLE_CUSTOM_ALLOCATOR
-#if 1
+#if 0
         hr = input->SetVideoInputFrameMemoryAllocator(NULL);
         if( FAILED(hr) )
         {
@@ -619,11 +613,14 @@ int main( int argc, char* argv[] )
     {
         test_iteration( deckLink, j+1 );
         printf("\nWaiting 2 sec...\n");
-        Sleep(2*1000);
+        WaitSec(2);
     }
 
     deckLink->Release();
     deckLinkIterator->Release();
+
+#ifdef _WIN32
     CoUninitialize();
+#endif
     return 0;
 }
