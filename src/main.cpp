@@ -3,7 +3,7 @@
 
 #define DISABLE_CUSTOM_ALLOCATOR
 //#define DISABLE_INPUT_CALLBACK
-const BMDDisplayMode g_mode = bmdModePAL;
+volatile BMDDisplayMode g_mode = bmdModePAL;
 
 #if defined(_WIN32)
 //=====================================================================================================================
@@ -106,8 +106,8 @@ inline void WaitSec( unsigned duration_sec )
 //=====================================================================================================================
 class InputCallback : public IDeckLinkInputCallback
 {
-    LONG volatile ref_count;
-    LONG volatile frame_count, signal_frame_count;
+    volatile LONG ref_count;
+    volatile LONG frame_count, signal_frame_count;
 
 public:
     InputCallback() : ref_count(1), frame_count(0), signal_frame_count(0)  {}
@@ -228,16 +228,17 @@ HRESULT STDMETHODCALLTYPE InputCallback::VideoInputFormatChanged(
                                                             BMDDetectedVideoInputFormatFlags flags
                                                             )
 {
+    BMDDisplayMode displayModeId = displayMode->GetDisplayMode();
     printf( "InputCallback::VideoInputFormatChanged - changed=[ %s%s%s], display_mode=%s, flags=[ %s%s%s]\n",
-                        ( events & bmdVideoInputDisplayModeChanged ? "DISP_MODE " : "" ),
-                        ( events & bmdVideoInputFieldDominanceChanged ? "FIELD_DOMINANCE " : "" ),
-                        ( events & bmdVideoInputColorspaceChanged ? "COLORSPACE " : "" ),
-                        DisplayModeName( displayMode->GetDisplayMode() ),
-                        ( flags & bmdDetectedVideoInputYCbCr422 ? "YUV422 " : "" ),
-                        ( flags & bmdDetectedVideoInputRGB444 ? "RGB " : "" ),
-                        ( flags & bmdDetectedVideoInputDualStream3D ? "3D " : "" )
-                        );
-
+                                            ( events & bmdVideoInputDisplayModeChanged ? "DISP_MODE " : "" ),
+                                            ( events & bmdVideoInputFieldDominanceChanged ? "FIELD_DOMINANCE " : "" ),
+                                            ( events & bmdVideoInputColorspaceChanged ? "COLORSPACE " : "" ),
+                                            DisplayModeName(displayModeId),
+                                            ( flags & bmdDetectedVideoInputYCbCr422 ? "YUV422 " : "" ),
+                                            ( flags & bmdDetectedVideoInputRGB444 ? "RGB " : "" ),
+                                            ( flags & bmdDetectedVideoInputDualStream3D ? "3D " : "" )
+                                            );
+    g_mode = displayModeId;
     return S_OK;
 }
 
@@ -301,8 +302,8 @@ ULONG STDMETHODCALLTYPE InputCallback::Release(void)
 //=====================================================================================================================
 class Alloc: public IDeckLinkMemoryAllocator
 {
-    LONG volatile ref_count;
-    LONG volatile buf_count;
+    volatile LONG ref_count;
+    volatile LONG buf_count;
 
     Alloc(): ref_count(1), buf_count(0)
     {
@@ -417,6 +418,7 @@ public:
 //=====================================================================================================================
 void test_iteration( IDeckLink* deckLink, unsigned long j )
 {
+    BMDDisplayMode displayModeId = g_mode;
     printf( "\nVideo+Audio Capture Testing Iteration #%lu started!\n", j );
 
     IDeckLinkInput* input;
@@ -439,8 +441,8 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
     else
     {
 #endif
-        printf("input->EnableVideoInput...\n");
-        hr = input->EnableVideoInput( g_mode, bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection );
+        printf("input->EnableVideoInput display_mode=%s\n", DisplayModeName(displayModeId) );
+        hr = input->EnableVideoInput( displayModeId, bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection );
         if( FAILED(hr) )
         {
             fprintf( stderr, "input->EnableVideoInput failed\n" );
@@ -474,7 +476,7 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
                     }
                     else
                     {
-                        for( unsigned n = 20; n; --n )
+                        for(  unsigned n = 20; n  &&  displayModeId == g_mode;  --n  )
                         {
                             printf( "Video+Audio Capture remaining %u sec...\n", n );
                             WaitSec(1);
