@@ -1,0 +1,42 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="src">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;def;odl;idl;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="gen">
+      <UniqueIdentifier>{a2305d57-39fe-45a3-bc13-4d9cf39a7de6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="DeckLinkSDK">
+      <UniqueIdentifier>{941b33a6-18f0-48c3-845b-6e25b9134ced}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="DeckLinkSDK\Win">
+      <UniqueIdentifier>{9a1abe5c-5251-414f-8830-f535a9a87e98}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="DeckLinkSDK\Win\include">
+      <UniqueIdentifier>{9c182e32-c260-4d6f-ac2c-93d3b116c2fe}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="DeckLinkSDK\Win\include\DeckLinkAPIVersion.h">
+      <Filter>DeckLinkSDK\Win\include</Filter>
+    </ClInclude>
+    <ClInclude Include="gen\DeckLinkAPI.h">
+      <Filter>gen</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="gen\DeckLinkAPI-iid.c">
+      <Filter>gen</Filter>
+    </ClCompile>
+    <ClCompile Include="src\main.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Midl Include="DeckLinkSDK\Win\include\DeckLinkAPI.idl">
+      <Filter>DeckLinkSDK\Win\include</Filter>
+    </Midl>
+  </ItemGroup>
+</Project>
