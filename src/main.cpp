@@ -100,7 +100,7 @@ public:
 
     ~InputCallback()
     {
-        printf( "InputCallback::~InputCallback - ref_count=%ld, frame_count=%ld(%ld)\n",
+        printf( "InputCallback::~InputCallback - ref_count=%ld, total_frame_count=%ld, signal_frame_count=%ld\n",
                                                         (long)ref_count, (long)frame_count, (long)signal_frame_count );
     }
 
@@ -215,7 +215,7 @@ HRESULT STDMETHODCALLTYPE InputCallback::VideoInputFormatChanged(
                                                             )
 {
     BMDDisplayMode displayModeId = displayMode->GetDisplayMode();
-    printf( "InputCallback::VideoInputFormatChanged - changed=[ %s%s%s], display_mode=%s, flags=[ %s%s%s]\n",
+    printf( "InputCallback::VideoInputFormatChanged: changed=[ %s%s%s], display_mode=%s, flags=[ %s%s%s]\n",
                                             ( events & bmdVideoInputDisplayModeChanged ? "DISP_MODE " : "" ),
                                             ( events & bmdVideoInputFieldDominanceChanged ? "FIELD_DOMINANCE " : "" ),
                                             ( events & bmdVideoInputColorspaceChanged ? "COLORSPACE " : "" ),
@@ -240,7 +240,25 @@ HRESULT STDMETHODCALLTYPE InputCallback::VideoInputFrameArrived(
 
         if( ( videoFrame->GetFlags() & bmdFrameHasNoInputSource ) == 0 )
         {
-            Int32AtomicAdd( &signal_frame_count, 1 );
+            if( Int32AtomicAdd( &signal_frame_count, 1 ) == 0 )
+            {
+                BMDTimeValue video_time, d;
+                videoFrame->GetStreamTime( &video_time, &d, 240000 );
+
+                if( audioPacket != 0 )
+                {
+                    BMDTimeValue audio_time;
+                    audioPacket->GetPacketTime( &audio_time, 240000 );
+
+                    printf(  "InputCallback::VideoInputFrameArrived: signal started - video_time=%lld/240000, "
+                                        "audio_time=%lld/240000\n",  (long long)video_time,  (long long)audio_time  );
+                }
+                else
+                {
+                    printf( "InputCallback::VideoInputFrameArrived: signal started - video_time=%lld/240000\n",
+                                                                                            (long long)video_time  );
+                }
+            }
         }
     }
 
@@ -521,25 +539,7 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
     input->Release();
 #endif
 
-    printf( "Video+Audio Capture Stopped.\n"
-            "Allocating+Reading+Deallocating 50 memory buffers of 1920x1080x4 bytes each.\n" );
-
-    unsigned memory_sum = 0;
-
-    for( unsigned k = 0; k < 50; ++k )
-    {
-        // memory allocating+reading+deallocating iteration
-        unsigned* buf = new unsigned[1920*1080];
-
-        for( size_t j = 0; j < 1920*1080; ++j )
-        {
-            memory_sum += buf[j];
-        }
-
-        delete[] buf;
-    }
-
-    printf( "Video+Audio Capture Testing Iteration #%lu finished (memory_sum=0x%x)!\n\n", j, memory_sum );
+    printf( "Video+Audio Capture Testing Iteration #%lu finished!\n\n", j );
 }
 
 //=====================================================================================================================
@@ -600,8 +600,8 @@ int main( int argc, char* argv[] )
     for( unsigned long j = 0; j < 0x80000000UL; ++j )
     {
         test_iteration( deckLink, j+1 );
-        printf("\nWaiting 2 sec...\n");
-        WaitSec(2);
+        printf("\nWaiting 1 sec...\n");
+        WaitSec(1);
     }
 
     deckLink->Release();
