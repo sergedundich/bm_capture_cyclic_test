@@ -1,12 +1,14 @@
-#include <comutil.h>
+#include <assert.h>
+#include <stdint.h>
 #include "DeckLinkAPI.h"
 
 #define DISABLE_CUSTOM_ALLOCATOR
 //#define DISABLE_INPUT_CALLBACK
-volatile BMDDisplayMode g_mode = bmdModePAL;
+volatile BMDDisplayMode g_mode = bmdModeHD720p5994;
 
 #if defined(_WIN32)
 //=====================================================================================================================
+#include <comutil.h>
 #include <windows.h>
 
 const long SystemTimeSec = 10000000;
@@ -40,11 +42,17 @@ inline IDeckLinkIterator* CreateDeckLinkIteratorInstance()
     return  static_cast<IDeckLinkIterator*>(p);
 }
 
-#elif defined(__APPLE__)
-//=====================================================================================================================
-#define STDMETHODCALLTYPE
+typedef unsigned long BM_UINT32;
 
-//---------------------------------------------------------------------------------------------------------------------
+inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
+{
+    return InterlockedExchangeAdd( (volatile LONG*)p, x );
+}
+
+#else // !defined(_WIN32)
+
+#if defined(__APPLE__)
+//=====================================================================================================================
 #include <string.h>
 #include <sys/time.h>
 
@@ -57,23 +65,26 @@ inline long long GetSystemTime()
     return tv.tv_sec*SystemTimeSec + tv.tv_usec*(SystemTimeSec/1000000);
 }
 
-inline void WaitSec( unsigned duration_sec )
-{
-    sleep(duration_sec);
-}
-
 //---------------------------------------------------------------------------------------------------------------------
 const REFIID IID_IUnknown = CFUUIDGetUUIDBytes(IUnknownUUID);
-
-//---------------------------------------------------------------------------------------------------------------------
-inline bool IsEqualGUID( const CFUUIDBytes& a, const CFUUIDBytes& b )
-{
-    return memcmp( &a, &b, sizeof(CFUUIDBytes) ) == 0;
-}
 
 #elif defined(__linux__)
 #include <string.h>
 #include <time.h>
+
+//=====================================================================================================================
+const long SystemTimeSec = 10000000;
+
+inline long long GetSystemTime()
+{
+    struct timespec tms;
+    clock_gettime( CLOCK_REALTIME, &tms );
+    return tms.tv_sec*SystemTimeSec + tms.tv_nsec/(1000000000/SystemTimeSec);
+}
+
+#else
+#error "Unsupported OS"
+#endif
 
 //=====================================================================================================================
 #define STDMETHODCALLTYPE
@@ -85,29 +96,36 @@ inline bool IsEqualGUID( const REFIID& a, const REFIID& b )
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-const long SystemTimeSec = 10000000;
-
-inline long long GetSystemTime()
-{
-    struct timespec tms;
-    clock_gettime( CLOCK_REALTIME, &tms );
-    return tms.tv_sec*SystemTimeSec + tms.tv_nsec/(1000000000/SystemTimeSec);
-}
-
 inline void WaitSec( unsigned duration_sec )
 {
     sleep(duration_sec);
 }
 
+typedef uint32_t BM_UINT32;
+
+#if defined(__i386__) || defined(__amd64__)
+
+inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
+{
+	__asm__ __volatile__(
+			"lock xaddl %0, %1"
+			: "=r"(x) : "m"(*p), "0"(x)
+			);
+	return x;
+}
+
 #else
-#error "Unsupported OS"
+#error "Unsupported CPU architecture"
 #endif
+
+
+#endif // defined(_WIN32) || !defined(_WIN32)
 
 //=====================================================================================================================
 class InputCallback : public IDeckLinkInputCallback
 {
-    volatile LONG ref_count;
-    volatile LONG frame_count, signal_frame_count;
+    volatile int32_t ref_count;
+    volatile int32_t frame_count, signal_frame_count;
 
 public:
     InputCallback() : ref_count(1), frame_count(0), signal_frame_count(0)  {}
@@ -250,11 +268,11 @@ HRESULT STDMETHODCALLTYPE InputCallback::VideoInputFrameArrived(
 {
     if( videoFrame != 0 )
     {
-        InterlockedIncrement( &frame_count );
+        Int32AtomicAdd( &frame_count, 1 );
 
         if( ( videoFrame->GetFlags() & bmdFrameHasNoInputSource ) == 0 )
         {
-            InterlockedIncrement( &signal_frame_count );
+            Int32AtomicAdd( &signal_frame_count, 1 );
         }
     }
 
@@ -266,16 +284,16 @@ HRESULT STDMETHODCALLTYPE InputCallback::QueryInterface( REFIID riid, void** pp 
 {
     if( IsEqualGUID( riid, IID_IDeckLinkInputCallback ) )
     {
-        int cnt = InterlockedIncrement( &ref_count );
-        printf( "InputCallback::QueryInterface(IDeckLinkInputCallback) - ref_count=%d\n", cnt );
+        int cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
+        printf( "InputCallback::QueryInterface(IDeckLinkInputCallback) - new_ref_count=%d\n", cnt );
         *pp = static_cast<IDeckLinkInputCallback*>(this);
         return S_OK;
     }
 
     if( IsEqualGUID( riid, IID_IUnknown ) )
     {
-        int cnt = InterlockedIncrement( &ref_count );
-        printf( "InputCallback::QueryInterface(IUnknown) - ref_count=%d\n", cnt );
+        int cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
+        printf( "InputCallback::QueryInterface(IUnknown) - new_ref_count=%d\n", cnt );
         *pp = static_cast<IUnknown*>(this);
         return S_OK;
     }
@@ -286,24 +304,24 @@ HRESULT STDMETHODCALLTYPE InputCallback::QueryInterface( REFIID riid, void** pp 
 //---------------------------------------------------------------------------------------------------------------------
 ULONG STDMETHODCALLTYPE InputCallback::AddRef(void)
 {
-    int cnt = InterlockedIncrement( &ref_count );
-    printf( "InputCallback::AddRef (ref_count=%d)\n", cnt );
+    int32_t cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
+    printf( "InputCallback::AddRef (new_ref_count=%d)\n", cnt );
     return cnt;
 }
 
 //---------------------------------------------------------------------------------------------------------------------
 ULONG STDMETHODCALLTYPE InputCallback::Release(void)
 {
-    int cnt = InterlockedDecrement( &ref_count );
-    printf( "InputCallback::Release (ref_count=%d)\n", cnt );
+    int32_t cnt = Int32AtomicAdd( &ref_count, -1 ) - 1;
+    printf( "InputCallback::Release (new_ref_count=%d)\n", cnt );
     return cnt;
 }
 
 //=====================================================================================================================
 class Alloc: public IDeckLinkMemoryAllocator
 {
-    volatile LONG ref_count;
-    volatile LONG buf_count;
+    volatile int32_t ref_count;
+    volatile int32_t buf_count;
 
     Alloc(): ref_count(1), buf_count(0)
     {
@@ -317,15 +335,15 @@ public:
 
     virtual ULONG STDMETHODCALLTYPE AddRef()
     {
-        int cnt = InterlockedIncrement( &ref_count );
-        printf( "Alloc::AddRef (ref_count=%d)\n", cnt );
+        int32_t cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
+        printf( "Alloc::AddRef (new_ref_count=%d)\n", cnt );
         return cnt;
     }
 
     virtual ULONG STDMETHODCALLTYPE Release()
     {
-        int cnt = InterlockedDecrement( &ref_count );
-        printf( "Alloc::Release (ref_count=%d)\n", cnt );
+        int32_t cnt = Int32AtomicAdd( &ref_count, -1 ) - 1;
+        printf( "Alloc::Release (new_ref_count=%d)\n", cnt );
 
         if( cnt <= 0 )
         {
@@ -339,16 +357,16 @@ public:
     {
         if( IsEqualGUID( riid, IID_IDeckLinkMemoryAllocator ) )
         {
-            int cnt = InterlockedIncrement( &ref_count );
-            printf( "Alloc::QueryInterface(IDeckLinkInputCallback) - ref_count=%d\n", cnt );
+            int32_t cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
+            printf( "Alloc::QueryInterface(IDeckLinkInputCallback) - new_ref_count=%d\n", cnt );
             *pp = static_cast<IDeckLinkMemoryAllocator*>(this);
             return S_OK;
         }
 
         if( IsEqualGUID( riid, IID_IUnknown ) )
         {
-            int cnt = InterlockedIncrement( &ref_count );
-            printf( "Alloc::QueryInterface(IUnknown) - ref_count=%d\n", cnt );
+            int32_t cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
+            printf( "Alloc::QueryInterface(IUnknown) - new_ref_count=%d\n", cnt );
             *pp = static_cast<IUnknown*>(this);
             return S_OK;
         }
@@ -356,11 +374,11 @@ public:
         return E_NOINTERFACE;
     }
 
-    virtual HRESULT STDMETHODCALLTYPE AllocateBuffer( unsigned long buf_size, void** pBuffer )
+    virtual HRESULT STDMETHODCALLTYPE AllocateBuffer( BM_UINT32 buf_size, void** pBuffer )
     {
         if( buf_size >= 0x80000000UL )
         {
-            printf( "Alloc::AllocateBuffer: buf_size=0x%08lx is not a sane value.\n", buf_size );
+            printf( "Alloc::AllocateBuffer: buf_size=0x%08lx is not a sane value.\n", (unsigned long)buf_size );
             return E_OUTOFMEMORY;
         }
 
@@ -382,21 +400,21 @@ public:
         }
         catch(...)
         {
-            printf( "Alloc::AllocateBuffer: allocation failed (buf_size=%lu).\n", buf_size );
+            printf( "Alloc::AllocateBuffer: allocation failed (buf_size=%lu).\n", (unsigned long)buf_size );
             return E_OUTOFMEMORY;
         }
 
-        long cnt = InterlockedIncrement(&buf_count);
+        int32_t cnt = Int32AtomicAdd( &buf_count, 1 ) + 1;
 
 //        printf( "Alloc::AllocateBuffer: ptr=0x%016llx, size=%lu, total_count=%ld\n",
-//                                                            (unsigned long long)*pBuffer, buf_size, cnt+1 );
+//                                                    (unsigned long long)*pBuffer, (unsigned long)buf_size, cnt );
         *pBuffer = ptr;
         return S_OK;
     }
 
     virtual HRESULT STDMETHODCALLTYPE ReleaseBuffer( void* buffer )
     {
-        long cnt = InterlockedDecrement(&buf_count);
+        int32_t cnt = Int32AtomicAdd( &buf_count, -1 ) - 1;
         //printf( "Alloc::ReleaseBuffer: ptr=0x%016llx, total_count=%ld\n", (unsigned long long)buffer, cnt );
         delete[] buffer;
         return S_OK;
