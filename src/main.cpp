@@ -11,15 +11,6 @@ volatile BMDDisplayMode g_mode = bmdModeHD720p5994;
 #include <comutil.h>
 #include <windows.h>
 
-const long SystemTimeSec = 10000000;
-
-inline long long GetSystemTime()
-{
-    LARGE_INTEGER sysTime;
-    GetSystemTimeAsFileTime( (LPFILETIME)&sysTime );
-    return sysTime.QuadPart;
-}
-
 inline void WaitSec( unsigned duration_sec )
 {
     Sleep( duration_sec*1000 );
@@ -50,43 +41,21 @@ inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
 }
 
 #else // !defined(_WIN32)
-
-#if defined(__APPLE__)
 //=====================================================================================================================
 #include <string.h>
+
+#if defined(__APPLE__)
 #include <sys/time.h>
 
-const long SystemTimeSec = 1000000;
-
-inline long long GetSystemTime()
-{
-    struct timeval tv;
-    gettimeofday( &tv, NULL );
-    return tv.tv_sec*SystemTimeSec + tv.tv_usec*(SystemTimeSec/1000000);
-}
-
-//---------------------------------------------------------------------------------------------------------------------
 const REFIID IID_IUnknown = CFUUIDGetUUIDBytes(IUnknownUUID);
 
 #elif defined(__linux__)
-#include <string.h>
 #include <time.h>
-
-//=====================================================================================================================
-const long SystemTimeSec = 10000000;
-
-inline long long GetSystemTime()
-{
-    struct timespec tms;
-    clock_gettime( CLOCK_REALTIME, &tms );
-    return tms.tv_sec*SystemTimeSec + tms.tv_nsec/(1000000000/SystemTimeSec);
-}
-
 #else
 #error "Unsupported OS"
 #endif
 
-//=====================================================================================================================
+//---------------------------------------------------------------------------------------------------------------------
 #define STDMETHODCALLTYPE
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -117,7 +86,6 @@ inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
 #else
 #error "Unsupported CPU architecture"
 #endif
-
 
 #endif // defined(_WIN32) || !defined(_WIN32)
 
