@@ -1,10 +1,11 @@
 #include <assert.h>
 #include <stdint.h>
+#include <map>
 #include "DeckLinkAPI.h"
 
-#define DISABLE_CUSTOM_ALLOCATOR
+//#define DISABLE_CUSTOM_ALLOCATOR
 //#define DISABLE_INPUT_CALLBACK
-volatile BMDDisplayMode g_mode = bmdModeHD720p5994;
+BMDDisplayMode  g_display_mode = bmdModeHD720p5994;
 
 #if defined(_WIN32)
 //=====================================================================================================================
@@ -53,9 +54,30 @@ inline bool InitCom()
     return true;
 }
 
+class CMutex
+{
+    CRITICAL_SECTION  m_obj;
+
+public:
+    CMutex()
+    {
+        ::InitializeCriticalSection( &m_obj );
+    }
+
+    ~CMutex()
+    {
+        ::DeleteCriticalSection(&m_obj);
+    }
+
+    void Lock()  { ::EnterCriticalSection(&m_obj); }
+    void Unlock()  { ::LeaveCriticalSection(&m_obj); }
+};
+
 #else // !defined(_WIN32)
 //=====================================================================================================================
 #include <string.h>
+#include <pthread.h>
+#include <stdexcept>
 
 #if defined(__APPLE__)
 #include <sys/time.h>
@@ -89,11 +111,8 @@ typedef uint32_t BM_UINT32;
 
 inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
 {
-	__asm__ __volatile__(
-			"lock xaddl %0, %1"
-			: "=r"(x) : "m"(*p), "0"(x)
-			);
-	return x;
+    __asm__ __volatile__( "lock xaddl %0, %1" : "=r"(x) : "m"(*p), "0"(x) );
+    return x;
 }
 
 #else
@@ -102,7 +121,58 @@ inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
 
 inline bool InitCom()  { return true; }
 
+class CMutex
+{
+    pthread_mutex_t m_mutex;
+
+public:
+    CMutex()
+    {
+        int err = pthread_mutex_init( &m_mutex, NULL );
+
+        if( err != 0 )
+        {
+            throw  std::runtime_error("pthread_mutex_init failed");
+        }
+    }
+
+    ~CMutex()
+    {
+        pthread_mutex_destroy(&m_mutex);
+    }
+
+    void Lock()
+    {
+        int err = pthread_mutex_lock(pMutex);
+
+        if( err != 0 )
+        {
+            throw std::runtime_error("pthread_mutex_lock failed");
+        }
+    }
+
+    void Unlock()
+    {
+        int err = pthread_mutex_unlock(pMutex);
+
+        if( err != 0 )
+        {
+            throw std::runtime_error("pthread_mutex_unlock failed");
+        }
+    }
+};
+
 #endif // defined(_WIN32) || !defined(_WIN32)
+
+//=====================================================================================================================
+class CAutoLockGuard
+{
+    CMutex&  m_obj;
+
+public:
+    CAutoLockGuard( CMutex& obj ) : m_obj(obj)  { m_obj.Lock(); }
+    ~CAutoLockGuard()  { m_obj.Unlock(); }
+};
 
 //=====================================================================================================================
 class CInputCallback : public IDeckLinkInputCallback
@@ -111,7 +181,10 @@ class CInputCallback : public IDeckLinkInputCallback
     volatile int32_t  frame_count, signal_frame_count;
 
 public:
-    CInputCallback() : ref_count(0), frame_count(0), signal_frame_count(0)  {}
+    volatile BMDDisplayMode  display_mode;
+
+public:
+    CInputCallback() : ref_count(0), frame_count(0), signal_frame_count(0), display_mode(bmdModeUnknown)  {}
 
     // overrides from IDeckLinkInputCallback
     virtual HRESULT STDMETHODCALLTYPE VideoInputFormatChanged(
@@ -233,7 +306,12 @@ HRESULT STDMETHODCALLTYPE CInputCallback::VideoInputFormatChanged(
                                             ( flags & bmdDetectedVideoInputRGB444 ? "RGB " : "" ),
                                             ( flags & bmdDetectedVideoInputDualStream3D ? "3D " : "" )
                                             );
-    g_mode = displayModeId;
+
+    if( display_mode != bmdModeUnknown )
+    {
+        display_mode = displayModeId;
+    }
+
     return S_OK;
 }
 
@@ -268,6 +346,10 @@ HRESULT STDMETHODCALLTYPE CInputCallback::VideoInputFrameArrived(
                                                                                             (long long)video_time  );
                 }
             }
+        }
+        else if(  signal_frame_count > 0  &&  g_display_mode == display_mode  )
+        {
+            display_mode = bmdModeUnknown;
         }
     }
 
@@ -313,6 +395,7 @@ ULONG STDMETHODCALLTYPE CInputCallback::Release(void)
     {
         printf( "CInputCallback::Release - new_ref_count=%ld, total_frame_count=%ld, signal_frame_count=%ld\n",
                                                             cnt, (long)frame_count, (long)signal_frame_count );
+        frame_count = 0;  signal_frame_count = 0;
     }
     else
     {
@@ -325,11 +408,14 @@ ULONG STDMETHODCALLTYPE CInputCallback::Release(void)
 //=====================================================================================================================
 class CMemAlloc: public IDeckLinkMemoryAllocator
 {
-    volatile int32_t ref_count;
-    volatile int32_t buf_count;
+    volatile int32_t  ref_count;
+    CMutex  buffers_lock;
+    std::multimap<BM_UINT32,char*>  free_buffers;
+    std::map<char*,BM_UINT32>  alloc_buffers;
 
 public:
-    CMemAlloc(): ref_count(0), buf_count(0)  {}
+    CMemAlloc(): ref_count(0)  {}
+    void Reset();
 
     virtual ULONG STDMETHODCALLTYPE AddRef();
     virtual ULONG STDMETHODCALLTYPE Release();
@@ -341,6 +427,66 @@ public:
     virtual HRESULT STDMETHODCALLTYPE Commit(void);
     virtual HRESULT STDMETHODCALLTYPE Decommit(void);
 };
+
+//---------------------------------------------------------------------------------------------------------------------
+static const uint32_t g_magic_base = 0xf4aeac59U;
+static const uint32_t g_magic_factor = 0xaa39456bU;
+static const uint32_t g_magic_init = 0x155c96f9U;
+
+void FillMagicData( void* ptr, size_t sz )
+{
+    uint32_t x = g_magic_init;
+    uint32_t* p = (uint32_t*)ptr;
+    uint32_t* p1 = p + sz/sizeof(uint32_t);
+
+    for( ; p < p1; ++p, x = (uint32_t)( (uint64_t)x*g_magic_factor % g_magic_base ) )
+    {
+        *p = x;
+    }
+}
+
+void VerifyMagicData( const void* ptr, size_t sz )
+{
+    uint32_t x = g_magic_init;
+    const uint32_t* p = (const uint32_t*)ptr;
+    const uint32_t* p1 = p + sz/sizeof(uint32_t);
+
+    for(  ;;  ++p,  x = (uint32_t)( (uint64_t)x*g_magic_factor % g_magic_base )  )
+    {
+        if( p >= p1 )
+        {
+            return;
+        }
+
+        if( *p != x )
+        {
+            break;
+        }
+    }
+
+    uint32_t x1 = *p;
+    const uint32_t* p2 = p;
+
+    for(  ;  ++p < p1  &&  *p == x1;  x = (uint32_t)( (uint64_t)x*g_magic_factor % g_magic_base )  );
+
+    printf(  "Buffer verification failed: ptr=%08llx, total_size=%lu, valid_size=%lu, content={ 0x%08llx }x%lu\n",
+                (unsigned long long)ptr,  (unsigned long)sz,  (unsigned long)( (const char*)p2 - (const char*)ptr ),
+                                            (unsigned long)x1,  (unsigned long)( (const char*)p - (const char*)p2 )  );
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void CMemAlloc::Reset()
+{
+    CAutoLockGuard lock_guard(buffers_lock);
+
+    for(  std::multimap<BM_UINT32,char*>::const_iterator it = free_buffers.begin();  it != free_buffers.end();  ++it  )
+    {
+        VerifyMagicData( it->second, it->first );
+        delete [] it->second;
+    }
+
+    free_buffers.clear();
+}
 
 //---------------------------------------------------------------------------------------------------------------------
 ULONG STDMETHODCALLTYPE CMemAlloc::AddRef()
@@ -355,6 +501,19 @@ ULONG STDMETHODCALLTYPE CMemAlloc::Release()
 {
     long cnt = Int32AtomicAdd( &ref_count, -1 ) - 1;
     printf( "CMemAlloc::Release - new_ref_count=%ld\n", cnt );
+
+    if( cnt <= 0 )
+    {
+        CAutoLockGuard lock_guard(buffers_lock);
+
+        assert( alloc_buffers.empty() );
+
+        for(  std::multimap<BM_UINT32,char*>::const_iterator it = free_buffers.begin();  it != free_buffers.end();  ++it  )
+        {
+            FillMagicData( it->second, it->first );
+        }
+    }
+
     return cnt;
 }
 
@@ -393,6 +552,16 @@ HRESULT STDMETHODCALLTYPE CMemAlloc::AllocateBuffer( BM_UINT32 buf_size, void** 
 
     try
     {
+        CAutoLockGuard lock_guard(buffers_lock);
+        std::multimap<BM_UINT32,char*>::iterator it = free_buffers.lower_bound(buf_size);
+
+        if( it != free_buffers.end() )
+        {
+            ptr = it->second;
+            buf_size = it->first;
+            free_buffers.erase(it);
+        }
+        else
         for(;;)
         {
             ptr = new char[buf_size];
@@ -404,6 +573,8 @@ HRESULT STDMETHODCALLTYPE CMemAlloc::AllocateBuffer( BM_UINT32 buf_size, void** 
 
             delete[] ptr;
         }
+
+        alloc_buffers[ptr] = buf_size;
     }
     catch(...)
     {
@@ -411,10 +582,6 @@ HRESULT STDMETHODCALLTYPE CMemAlloc::AllocateBuffer( BM_UINT32 buf_size, void** 
         return E_OUTOFMEMORY;
     }
 
-    int32_t cnt = Int32AtomicAdd( &buf_count, 1 ) + 1;
-
-//        printf( "CMemAlloc::AllocateBuffer: ptr=0x%016llx, size=%lu, total_count=%ld\n",
-//                                                    (unsigned long long)*pBuffer, (unsigned long)buf_size, cnt );
     *pBuffer = ptr;
     return S_OK;
 }
@@ -422,8 +589,19 @@ HRESULT STDMETHODCALLTYPE CMemAlloc::AllocateBuffer( BM_UINT32 buf_size, void** 
 //---------------------------------------------------------------------------------------------------------------------
 HRESULT STDMETHODCALLTYPE CMemAlloc::ReleaseBuffer( void* buffer )
 {
-    int32_t cnt = Int32AtomicAdd( &buf_count, -1 ) - 1;
-    //printf( "CMemAlloc::ReleaseBuffer: ptr=0x%016llx, total_count=%ld\n", (unsigned long long)buffer, cnt );
+    {
+        CAutoLockGuard lock_guard(buffers_lock);
+        std::map<char*,BM_UINT32>::iterator it = alloc_buffers.find( (char*)buffer );
+
+        assert( it != alloc_buffers.end() );
+        if( it != alloc_buffers.end() )
+        {
+            free_buffers.insert( std::multimap<BM_UINT32,char*>::value_type( it->second, it->first ) );
+            alloc_buffers.erase(it);
+            return S_OK;
+        }
+    }
+
     delete[] buffer;
     return S_OK;
 }
@@ -449,7 +627,6 @@ static CInputCallback  g_callback;
 //---------------------------------------------------------------------------------------------------------------------
 void test_iteration( IDeckLink* deckLink, unsigned long j )
 {
-    BMDDisplayMode displayModeId = g_mode;
     printf( "\nVideo+Audio Capture Testing Iteration #%lu started!\n", j );
 
     IDeckLinkInput* input;
@@ -463,6 +640,7 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
 
 #ifndef DISABLE_CUSTOM_ALLOCATOR
     printf("input->SetVideoInputFrameMemoryAllocator...\n");
+    g_alloc.Reset();
     hr = input->SetVideoInputFrameMemoryAllocator(&g_alloc);
     if( FAILED(hr) )
     {
@@ -471,8 +649,8 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
     else
     {
 #endif
-        printf("input->EnableVideoInput display_mode=%s\n", DisplayModeName(displayModeId) );
-        hr = input->EnableVideoInput( displayModeId, bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection );
+        printf("input->EnableVideoInput display_mode=%s\n", DisplayModeName(g_display_mode) );
+        hr = input->EnableVideoInput( g_display_mode, bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection );
         if( FAILED(hr) )
         {
             fprintf( stderr, "input->EnableVideoInput failed\n" );
@@ -488,6 +666,7 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
             else
             {
 #ifndef DISABLE_INPUT_CALLBACK
+                g_callback.display_mode = g_display_mode;
                 printf("input->SetCallback(obj)...\n");
                 hr = input->SetCallback(&g_callback);
                 if( FAILED(hr) )
@@ -505,7 +684,7 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
                     }
                     else
                     {
-                        for(  unsigned n = 20; n  &&  displayModeId == g_mode;  --n  )
+                        for(  unsigned n = 20; n  &&  g_callback.display_mode == g_display_mode;  --n  )
                         {
                             printf( "Video+Audio Capture remaining %u sec...\n", n );
                             WaitSec(1);
@@ -559,6 +738,11 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
     input->Release();
 
     printf( "Video+Audio Capture Testing Iteration #%lu finished!\n\n", j );
+
+    if( g_callback.display_mode != bmdModeUnknown )
+    {
+        g_display_mode = g_callback.display_mode;
+    }
 }
 
 //=====================================================================================================================
