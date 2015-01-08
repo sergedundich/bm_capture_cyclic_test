@@ -40,6 +40,19 @@ inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
     return InterlockedExchangeAdd( (volatile LONG*)p, x );
 }
 
+inline bool InitCom()
+{
+    //  Initialize COM on this thread
+    HRESULT hr = CoInitialize(NULL);
+    if( FAILED(hr) )
+    {
+        fprintf( stderr, "Initialization of COM failed - hr = %08x.\n", hr );
+        return false;
+    }
+
+    return true;
+}
+
 #else // !defined(_WIN32)
 //=====================================================================================================================
 #include <string.h>
@@ -86,6 +99,8 @@ inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
 #else
 #error "Unsupported CPU architecture"
 #endif
+
+inline bool InitCom()  { return true; }
 
 #endif // defined(_WIN32) || !defined(_WIN32)
 
@@ -549,21 +564,15 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
 //=====================================================================================================================
 int main( int argc, char* argv[] )
 {
-#ifdef _WIN32
-    //  Initialize COM on this thread
-    HRESULT hr = CoInitialize(NULL);
-    if( FAILED(hr) )
+    if( !InitCom() )
     {
-        fprintf( stderr, "Initialization of COM failed - hr = %08x.\n", hr );
         return 1;
     }
-#endif
 
     IDeckLinkIterator*  deckLinkIterator = CreateDeckLinkIteratorInstance();
     if( deckLinkIterator == NULL )
     {
         fprintf( stderr, "A DeckLink iterator could not be created. The DeckLink drivers may not be installed.\n" );
-        CoUninitialize();
         return 1;
     }
 
@@ -573,7 +582,7 @@ int main( int argc, char* argv[] )
     {
         // We can get the version of the API like this:
         IDeckLinkAPIInformation* deckLinkAPIInformation;
-        hr = deckLinkIterator->QueryInterface( IID_IDeckLinkAPIInformation, (void**)&deckLinkAPIInformation );
+        HRESULT hr = deckLinkIterator->QueryInterface( IID_IDeckLinkAPIInformation, (void**)&deckLinkAPIInformation );
         if( hr == S_OK )
         {
             LONGLONG  deckLinkVersion;
@@ -592,12 +601,11 @@ int main( int argc, char* argv[] )
         }
     }
 
-    hr = deckLinkIterator->Next(&deckLink); // first device
+    HRESULT hr = deckLinkIterator->Next(&deckLink); // first device
     if( FAILED(hr) )
     {
         fprintf( stderr, "No Blackmagic Design devices were found.\n" );
         deckLinkIterator->Release();
-        CoUninitialize();
         return 1;
     }
 
@@ -610,9 +618,5 @@ int main( int argc, char* argv[] )
 
     deckLink->Release();
     deckLinkIterator->Release();
-
-#ifdef _WIN32
-    CoUninitialize();
-#endif
     return 0;
 }
