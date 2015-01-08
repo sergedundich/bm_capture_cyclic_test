@@ -90,19 +90,13 @@ inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
 #endif // defined(_WIN32) || !defined(_WIN32)
 
 //=====================================================================================================================
-class InputCallback : public IDeckLinkInputCallback
+class CInputCallback : public IDeckLinkInputCallback
 {
-    volatile int32_t ref_count;
-    volatile int32_t frame_count, signal_frame_count;
+    volatile int32_t  ref_count;
+    volatile int32_t  frame_count, signal_frame_count;
 
 public:
-    InputCallback() : ref_count(1), frame_count(0), signal_frame_count(0)  {}
-
-    ~InputCallback()
-    {
-        printf( "InputCallback::~InputCallback - ref_count=%ld, total_frame_count=%ld, signal_frame_count=%ld\n",
-                                                        (long)ref_count, (long)frame_count, (long)signal_frame_count );
-    }
+    CInputCallback() : ref_count(0), frame_count(0), signal_frame_count(0)  {}
 
     // overrides from IDeckLinkInputCallback
     virtual HRESULT STDMETHODCALLTYPE VideoInputFormatChanged(
@@ -208,14 +202,14 @@ const char* DisplayModeName( BMDDisplayMode displayModeId )
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-HRESULT STDMETHODCALLTYPE InputCallback::VideoInputFormatChanged(
+HRESULT STDMETHODCALLTYPE CInputCallback::VideoInputFormatChanged(
                                                             BMDVideoInputFormatChangedEvents events,
                                                             IDeckLinkDisplayMode* displayMode,
                                                             BMDDetectedVideoInputFormatFlags flags
                                                             )
 {
     BMDDisplayMode displayModeId = displayMode->GetDisplayMode();
-    printf( "InputCallback::VideoInputFormatChanged: changed=[ %s%s%s], display_mode=%s, flags=[ %s%s%s]\n",
+    printf( "CInputCallback::VideoInputFormatChanged: changed=[ %s%s%s], display_mode=%s, flags=[ %s%s%s]\n",
                                             ( events & bmdVideoInputDisplayModeChanged ? "DISP_MODE " : "" ),
                                             ( events & bmdVideoInputFieldDominanceChanged ? "FIELD_DOMINANCE " : "" ),
                                             ( events & bmdVideoInputColorspaceChanged ? "COLORSPACE " : "" ),
@@ -229,7 +223,7 @@ HRESULT STDMETHODCALLTYPE InputCallback::VideoInputFormatChanged(
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-HRESULT STDMETHODCALLTYPE InputCallback::VideoInputFrameArrived(
+HRESULT STDMETHODCALLTYPE CInputCallback::VideoInputFrameArrived(
                                                             IDeckLinkVideoInputFrame* videoFrame,
                                                             IDeckLinkAudioInputPacket* audioPacket
                                                             )
@@ -250,12 +244,12 @@ HRESULT STDMETHODCALLTYPE InputCallback::VideoInputFrameArrived(
                     BMDTimeValue audio_time;
                     audioPacket->GetPacketTime( &audio_time, 240000 );
 
-                    printf(  "InputCallback::VideoInputFrameArrived: signal started - video_time=%lld/240000, "
+                    printf(  "CInputCallback::VideoInputFrameArrived: signal started - video_time=%lld/240000, "
                                         "audio_time=%lld/240000\n",  (long long)video_time,  (long long)audio_time  );
                 }
                 else
                 {
-                    printf( "InputCallback::VideoInputFrameArrived: signal started - video_time=%lld/240000\n",
+                    printf( "CInputCallback::VideoInputFrameArrived: signal started - video_time=%lld/240000\n",
                                                                                             (long long)video_time  );
                 }
             }
@@ -266,20 +260,20 @@ HRESULT STDMETHODCALLTYPE InputCallback::VideoInputFrameArrived(
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-HRESULT STDMETHODCALLTYPE InputCallback::QueryInterface( REFIID riid, void** pp )
+HRESULT STDMETHODCALLTYPE CInputCallback::QueryInterface( REFIID riid, void** pp )
 {
     if( IsEqualGUID( riid, IID_IDeckLinkInputCallback ) )
     {
-        int cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
-        printf( "InputCallback::QueryInterface(IDeckLinkInputCallback) - new_ref_count=%d\n", cnt );
+        long cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
+        printf( "CInputCallback::QueryInterface(IDeckLinkInputCallback) - new_ref_count=%ld\n", cnt );
         *pp = static_cast<IDeckLinkInputCallback*>(this);
         return S_OK;
     }
 
     if( IsEqualGUID( riid, IID_IUnknown ) )
     {
-        int cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
-        printf( "InputCallback::QueryInterface(IUnknown) - new_ref_count=%d\n", cnt );
+        long cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
+        printf( "CInputCallback::QueryInterface(IUnknown) - new_ref_count=%ld\n", cnt );
         *pp = static_cast<IUnknown*>(this);
         return S_OK;
     }
@@ -288,138 +282,156 @@ HRESULT STDMETHODCALLTYPE InputCallback::QueryInterface( REFIID riid, void** pp 
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-ULONG STDMETHODCALLTYPE InputCallback::AddRef(void)
+ULONG STDMETHODCALLTYPE CInputCallback::AddRef(void)
 {
-    int32_t cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
-    printf( "InputCallback::AddRef (new_ref_count=%d)\n", cnt );
+    long cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
+    printf( "CInputCallback::AddRef - new_ref_count=%ld\n", cnt );
     return cnt;
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-ULONG STDMETHODCALLTYPE InputCallback::Release(void)
+ULONG STDMETHODCALLTYPE CInputCallback::Release(void)
 {
-    int32_t cnt = Int32AtomicAdd( &ref_count, -1 ) - 1;
-    printf( "InputCallback::Release (new_ref_count=%d)\n", cnt );
+    long cnt = Int32AtomicAdd( &ref_count, -1 ) - 1;
+
+    if( cnt <= 0 )
+    {
+        printf( "CInputCallback::Release - new_ref_count=%ld, total_frame_count=%ld, signal_frame_count=%ld\n",
+                                                            cnt, (long)frame_count, (long)signal_frame_count );
+    }
+    else
+    {
+        printf( "CInputCallback::Release - new_ref_count=%ld\n", cnt );
+    }
+
     return cnt;
 }
 
 //=====================================================================================================================
-class Alloc: public IDeckLinkMemoryAllocator
+class CMemAlloc: public IDeckLinkMemoryAllocator
 {
     volatile int32_t ref_count;
     volatile int32_t buf_count;
 
-    Alloc(): ref_count(1), buf_count(0)
-    {
-        printf("Alloc::Alloc (ref_count=1)\n");
-    }
-
-    ~Alloc()  { printf( "Alloc::~Alloc current buf count %ld\n", buf_count ); }
-
 public:
-    static IDeckLinkMemoryAllocator* CreateInstance()  { return new Alloc(); }
+    CMemAlloc(): ref_count(0), buf_count(0)  {}
 
-    virtual ULONG STDMETHODCALLTYPE AddRef()
-    {
-        int32_t cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
-        printf( "Alloc::AddRef (new_ref_count=%d)\n", cnt );
-        return cnt;
-    }
+    virtual ULONG STDMETHODCALLTYPE AddRef();
+    virtual ULONG STDMETHODCALLTYPE Release();
+    virtual HRESULT STDMETHODCALLTYPE QueryInterface( REFIID riid, void** pp );
 
-    virtual ULONG STDMETHODCALLTYPE Release()
-    {
-        int32_t cnt = Int32AtomicAdd( &ref_count, -1 ) - 1;
-        printf( "Alloc::Release (new_ref_count=%d)\n", cnt );
+    virtual HRESULT STDMETHODCALLTYPE AllocateBuffer( BM_UINT32 buf_size, void** pBuffer );
+    virtual HRESULT STDMETHODCALLTYPE ReleaseBuffer( void* buffer );
 
-        if( cnt <= 0 )
-        {
-            delete this;
-        }
-
-        return cnt;
-    }
-
-    virtual HRESULT STDMETHODCALLTYPE QueryInterface( REFIID riid, void** pp )
-    {
-        if( IsEqualGUID( riid, IID_IDeckLinkMemoryAllocator ) )
-        {
-            int32_t cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
-            printf( "Alloc::QueryInterface(IDeckLinkInputCallback) - new_ref_count=%d\n", cnt );
-            *pp = static_cast<IDeckLinkMemoryAllocator*>(this);
-            return S_OK;
-        }
-
-        if( IsEqualGUID( riid, IID_IUnknown ) )
-        {
-            int32_t cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
-            printf( "Alloc::QueryInterface(IUnknown) - new_ref_count=%d\n", cnt );
-            *pp = static_cast<IUnknown*>(this);
-            return S_OK;
-        }
-
-        return E_NOINTERFACE;
-    }
-
-    virtual HRESULT STDMETHODCALLTYPE AllocateBuffer( BM_UINT32 buf_size, void** pBuffer )
-    {
-        if( buf_size >= 0x80000000UL )
-        {
-            printf( "Alloc::AllocateBuffer: buf_size=0x%08lx is not a sane value.\n", (unsigned long)buf_size );
-            return E_OUTOFMEMORY;
-        }
-
-        char* ptr;
-
-        try
-        {
-            for(;;)
-            {
-                ptr = new char[buf_size];
-
-                if( (uintptr_t)ptr % 16 == 0 )
-                {
-                    break;
-                }
-
-                delete[] ptr;
-            }
-        }
-        catch(...)
-        {
-            printf( "Alloc::AllocateBuffer: allocation failed (buf_size=%lu).\n", (unsigned long)buf_size );
-            return E_OUTOFMEMORY;
-        }
-
-        int32_t cnt = Int32AtomicAdd( &buf_count, 1 ) + 1;
-
-//        printf( "Alloc::AllocateBuffer: ptr=0x%016llx, size=%lu, total_count=%ld\n",
-//                                                    (unsigned long long)*pBuffer, (unsigned long)buf_size, cnt );
-        *pBuffer = ptr;
-        return S_OK;
-    }
-
-    virtual HRESULT STDMETHODCALLTYPE ReleaseBuffer( void* buffer )
-    {
-        int32_t cnt = Int32AtomicAdd( &buf_count, -1 ) - 1;
-        //printf( "Alloc::ReleaseBuffer: ptr=0x%016llx, total_count=%ld\n", (unsigned long long)buffer, cnt );
-        delete[] buffer;
-        return S_OK;
-    }
-
-    virtual HRESULT STDMETHODCALLTYPE Commit(void)
-    {
-        printf("Alloc::Commit\n");
-        return S_OK;
-    }
-
-    virtual HRESULT STDMETHODCALLTYPE Decommit(void)
-    {
-        printf("Alloc::Decommit\n");
-        return S_OK;
-    }
+    virtual HRESULT STDMETHODCALLTYPE Commit(void);
+    virtual HRESULT STDMETHODCALLTYPE Decommit(void);
 };
 
+//---------------------------------------------------------------------------------------------------------------------
+ULONG STDMETHODCALLTYPE CMemAlloc::AddRef()
+{
+    long cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
+    printf( "CMemAlloc::AddRef - new_ref_count=%ld\n", cnt );
+    return cnt;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+ULONG STDMETHODCALLTYPE CMemAlloc::Release()
+{
+    long cnt = Int32AtomicAdd( &ref_count, -1 ) - 1;
+    printf( "CMemAlloc::Release - new_ref_count=%ld\n", cnt );
+    return cnt;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+HRESULT STDMETHODCALLTYPE CMemAlloc::QueryInterface( REFIID riid, void** pp )
+{
+    if( IsEqualGUID( riid, IID_IDeckLinkMemoryAllocator ) )
+    {
+        long cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
+        printf( "CMemAlloc::QueryInterface(IDeckLinkInputCallback) - new_ref_count=%ld\n", cnt );
+        *pp = static_cast<IDeckLinkMemoryAllocator*>(this);
+        return S_OK;
+    }
+
+    if( IsEqualGUID( riid, IID_IUnknown ) )
+    {
+        long cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
+        printf( "CMemAlloc::QueryInterface(IUnknown) - new_ref_count=%ld\n", cnt );
+        *pp = static_cast<IUnknown*>(this);
+        return S_OK;
+    }
+
+    return E_NOINTERFACE;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+HRESULT STDMETHODCALLTYPE CMemAlloc::AllocateBuffer( BM_UINT32 buf_size, void** pBuffer )
+{
+    if( buf_size >= 0x80000000UL )
+    {
+        printf( "CMemAlloc::AllocateBuffer: buf_size=0x%08lx is not a sane value.\n", (unsigned long)buf_size );
+        return E_OUTOFMEMORY;
+    }
+
+    char* ptr;
+
+    try
+    {
+        for(;;)
+        {
+            ptr = new char[buf_size];
+
+            if( (uintptr_t)ptr % 16 == 0 )
+            {
+                break;
+            }
+
+            delete[] ptr;
+        }
+    }
+    catch(...)
+    {
+        printf( "CMemAlloc::AllocateBuffer: allocation failed (buf_size=%lu).\n", (unsigned long)buf_size );
+        return E_OUTOFMEMORY;
+    }
+
+    int32_t cnt = Int32AtomicAdd( &buf_count, 1 ) + 1;
+
+//        printf( "CMemAlloc::AllocateBuffer: ptr=0x%016llx, size=%lu, total_count=%ld\n",
+//                                                    (unsigned long long)*pBuffer, (unsigned long)buf_size, cnt );
+    *pBuffer = ptr;
+    return S_OK;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+HRESULT STDMETHODCALLTYPE CMemAlloc::ReleaseBuffer( void* buffer )
+{
+    int32_t cnt = Int32AtomicAdd( &buf_count, -1 ) - 1;
+    //printf( "CMemAlloc::ReleaseBuffer: ptr=0x%016llx, total_count=%ld\n", (unsigned long long)buffer, cnt );
+    delete[] buffer;
+    return S_OK;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+HRESULT STDMETHODCALLTYPE CMemAlloc::Commit(void)
+{
+    printf("CMemAlloc::Commit\n");
+    return S_OK;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+HRESULT STDMETHODCALLTYPE CMemAlloc::Decommit(void)
+{
+    printf("CMemAlloc::Decommit\n");
+    return S_OK;
+}
+
 //=====================================================================================================================
+static CMemAlloc  g_alloc;
+static CInputCallback  g_callback;
+
+//---------------------------------------------------------------------------------------------------------------------
 void test_iteration( IDeckLink* deckLink, unsigned long j )
 {
     BMDDisplayMode displayModeId = g_mode;
@@ -435,9 +447,8 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
     }
 
 #ifndef DISABLE_CUSTOM_ALLOCATOR
-    IDeckLinkMemoryAllocator* alloc = Alloc::CreateInstance();
     printf("input->SetVideoInputFrameMemoryAllocator...\n");
-    hr = input->SetVideoInputFrameMemoryAllocator(alloc);
+    hr = input->SetVideoInputFrameMemoryAllocator(&g_alloc);
     if( FAILED(hr) )
     {
         fprintf( stderr, "input->SetVideoInputFrameMemoryAllocator(obj) failed\n" );
@@ -462,9 +473,8 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
             else
             {
 #ifndef DISABLE_INPUT_CALLBACK
-                InputCallback callback;
                 printf("input->SetCallback(obj)...\n");
-                hr = input->SetCallback(&callback);
+                hr = input->SetCallback(&g_callback);
                 if( FAILED(hr) )
                 {
                     fprintf( stderr, "input->SetCallback failed\n" );
@@ -529,15 +539,9 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
         }
 #endif
     }
-
-    printf("input->Release...\n");
-    input->Release();
-
-    alloc->Release();
-#else
-    printf("input->Release...\n");
-    input->Release();
 #endif
+    printf("input->Release...\n");
+    input->Release();
 
     printf( "Video+Audio Capture Testing Iteration #%lu finished!\n\n", j );
 }
