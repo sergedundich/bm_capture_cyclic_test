@@ -415,7 +415,7 @@ class CMemAlloc: public IDeckLinkMemoryAllocator
 
 public:
     CMemAlloc(): ref_count(0)  {}
-    void Reset();
+    bool Reset();
 
     virtual ULONG STDMETHODCALLTYPE AddRef();
     virtual ULONG STDMETHODCALLTYPE Release();
@@ -445,7 +445,13 @@ void FillMagicData( void* ptr, size_t sz )
     }
 }
 
-void VerifyMagicData( const void* ptr, size_t sz )
+#if UINTPTR_MAX > 0xffffffffUL
+#define PRINTF_PTR_SIZE "16"
+#else
+#define PRINTF_PTR_SIZE "8"
+#endif
+
+bool VerifyMagicData( const void* ptr, size_t sz )
 {
     uint32_t x = g_magic_init;
     const uint32_t* p = (const uint32_t*)ptr;
@@ -455,7 +461,7 @@ void VerifyMagicData( const void* ptr, size_t sz )
     {
         if( p >= p1 )
         {
-            return;
+            return true;
         }
 
         if( *p != x )
@@ -469,23 +475,27 @@ void VerifyMagicData( const void* ptr, size_t sz )
 
     for(  ;  ++p < p1  &&  *p == x1;  x = (uint32_t)( (uint64_t)x*g_magic_factor % g_magic_base )  );
 
-    printf(  "Buffer verification failed: ptr=%08llx, total_size=%lu, valid_size=%lu, content={ 0x%08llx }x%lu\n",
+    printf(  "ALERT!!! Buffer verification failed: ptr=0x%0" PRINTF_PTR_SIZE
+                                                    "llx, total_size=%lu, valid_size=%lu, content=%lu*{0x%08lx}...\n",
                 (unsigned long long)ptr,  (unsigned long)sz,  (unsigned long)( (const char*)p2 - (const char*)ptr ),
-                                            (unsigned long)x1,  (unsigned long)( (const char*)p - (const char*)p2 )  );
+                                            (unsigned long)( (const char*)p - (const char*)p2 ),  (unsigned long)x1  );
+    return false;
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-void CMemAlloc::Reset()
+bool CMemAlloc::Reset()
 {
+    bool ok = true;
     CAutoLockGuard lock_guard(buffers_lock);
 
     for(  std::multimap<BM_UINT32,char*>::const_iterator it = free_buffers.begin();  it != free_buffers.end();  ++it  )
     {
-        VerifyMagicData( it->second, it->first );
+        ok &= VerifyMagicData( it->second, it->first );
         delete [] it->second;
     }
 
     free_buffers.clear();
+    return ok;
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -512,6 +522,14 @@ ULONG STDMETHODCALLTYPE CMemAlloc::Release()
         {
             FillMagicData( it->second, it->first );
         }
+
+#if 0 // corrupt one of the buffers
+        std::multimap<BM_UINT32,char*>::const_iterator it = free_buffers.begin();
+        if(  it != free_buffers.end()  &&  it->first > 80  )
+        {
+            memset( (char*)it->second + it->first/2, 0x80, 40 );
+        }
+#endif
     }
 
     return cnt;
@@ -640,7 +658,6 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
 
 #ifndef DISABLE_CUSTOM_ALLOCATOR
     printf("input->SetVideoInputFrameMemoryAllocator...\n");
-    g_alloc.Reset();
     hr = input->SetVideoInputFrameMemoryAllocator(&g_alloc);
     if( FAILED(hr) )
     {
@@ -798,6 +815,12 @@ int main( int argc, char* argv[] )
         test_iteration( deckLink, j+1 );
         printf("\nWaiting 1 sec...\n");
         WaitSec(1);
+
+        if( !g_alloc.Reset() )
+        {
+            printf("\nPress ENTER to continue...\n");
+            getc(stdin);
+        }
     }
 
     deckLink->Release();
