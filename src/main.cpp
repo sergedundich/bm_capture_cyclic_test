@@ -1,178 +1,10 @@
-#include <assert.h>
-#include <stdint.h>
+#include <utils.h>
 #include <map>
-#include "DeckLinkAPI.h"
 
 //#define DISABLE_CUSTOM_ALLOCATOR
 //#define DISABLE_INPUT_CALLBACK
+//#define DISABLE_SIGNAL_STOP_DETECTION
 BMDDisplayMode  g_display_mode = bmdModeHD720p5994;
-
-#if defined(_WIN32)
-//=====================================================================================================================
-#include <comutil.h>
-#include <windows.h>
-
-inline void WaitSec( unsigned duration_sec )
-{
-    Sleep( duration_sec*1000 );
-}
-
-inline IDeckLinkIterator* CreateDeckLinkIteratorInstance()
-{
-    LPVOID  p = NULL;
-    HRESULT  hr = CoCreateInstance(
-                                    CLSID_CDeckLinkIterator,  NULL,  CLSCTX_ALL,
-                                    IID_IDeckLinkIterator,  &p
-                                    );
-
-    if ( FAILED(hr) )
-    {
-        return NULL;
-    }
-
-    assert( p != NULL );
-    return  static_cast<IDeckLinkIterator*>(p);
-}
-
-typedef unsigned long BM_UINT32;
-
-inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
-{
-    return InterlockedExchangeAdd( (volatile LONG*)p, x );
-}
-
-inline bool InitCom()
-{
-    //  Initialize COM on this thread
-    HRESULT hr = CoInitialize(NULL);
-    if( FAILED(hr) )
-    {
-        fprintf( stderr, "Initialization of COM failed - hr = %08x.\n", hr );
-        return false;
-    }
-
-    return true;
-}
-
-class CMutex
-{
-    CRITICAL_SECTION  m_obj;
-
-public:
-    CMutex()
-    {
-        ::InitializeCriticalSection( &m_obj );
-    }
-
-    ~CMutex()
-    {
-        ::DeleteCriticalSection(&m_obj);
-    }
-
-    void Lock()  { ::EnterCriticalSection(&m_obj); }
-    void Unlock()  { ::LeaveCriticalSection(&m_obj); }
-};
-
-#else // !defined(_WIN32)
-//=====================================================================================================================
-#include <string.h>
-#include <pthread.h>
-#include <stdexcept>
-
-#if defined(__APPLE__)
-#include <sys/time.h>
-
-const REFIID IID_IUnknown = CFUUIDGetUUIDBytes(IUnknownUUID);
-
-#elif defined(__linux__)
-#include <time.h>
-#else
-#error "Unsupported OS"
-#endif
-
-//---------------------------------------------------------------------------------------------------------------------
-#define STDMETHODCALLTYPE
-
-//---------------------------------------------------------------------------------------------------------------------
-inline bool IsEqualGUID( const REFIID& a, const REFIID& b )
-{
-    return memcmp( &a, &b, sizeof(REFIID) ) == 0;
-}
-
-//---------------------------------------------------------------------------------------------------------------------
-inline void WaitSec( unsigned duration_sec )
-{
-    sleep(duration_sec);
-}
-
-typedef uint32_t BM_UINT32;
-
-#if defined(__i386__) || defined(__amd64__)
-
-inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
-{
-    __asm__ __volatile__( "lock xaddl %0, %1" : "=r"(x) : "m"(*p), "0"(x) );
-    return x;
-}
-
-#else
-#error "Unsupported CPU architecture"
-#endif
-
-inline bool InitCom()  { return true; }
-
-class CMutex
-{
-    pthread_mutex_t m_mutex;
-
-public:
-    CMutex()
-    {
-        int err = pthread_mutex_init( &m_mutex, NULL );
-
-        if( err != 0 )
-        {
-            throw  std::runtime_error("pthread_mutex_init failed");
-        }
-    }
-
-    ~CMutex()
-    {
-        pthread_mutex_destroy(&m_mutex);
-    }
-
-    void Lock()
-    {
-        int err = pthread_mutex_lock(pMutex);
-
-        if( err != 0 )
-        {
-            throw std::runtime_error("pthread_mutex_lock failed");
-        }
-    }
-
-    void Unlock()
-    {
-        int err = pthread_mutex_unlock(pMutex);
-
-        if( err != 0 )
-        {
-            throw std::runtime_error("pthread_mutex_unlock failed");
-        }
-    }
-};
-
-#endif // defined(_WIN32) || !defined(_WIN32)
-
-//=====================================================================================================================
-class CAutoLockGuard
-{
-    CMutex&  m_obj;
-
-public:
-    CAutoLockGuard( CMutex& obj ) : m_obj(obj)  { m_obj.Lock(); }
-    ~CAutoLockGuard()  { m_obj.Unlock(); }
-};
 
 //=====================================================================================================================
 class CInputCallback : public IDeckLinkInputCallback
@@ -347,10 +179,12 @@ HRESULT STDMETHODCALLTYPE CInputCallback::VideoInputFrameArrived(
                 }
             }
         }
+#ifndef DISABLE_SIGNAL_STOP_DETECTION
         else if(  signal_frame_count > 0  &&  g_display_mode == display_mode  )
         {
             display_mode = bmdModeUnknown;
         }
+#endif
     }
 
     return S_OK;
@@ -486,7 +320,7 @@ bool VerifyMagicData( const void* ptr, size_t sz )
 bool CMemAlloc::Reset()
 {
     bool ok = true;
-    CAutoLockGuard lock_guard(buffers_lock);
+    CMutexLockGuard lock_guard(buffers_lock);
 
     for(  std::multimap<BM_UINT32,char*>::const_iterator it = free_buffers.begin();  it != free_buffers.end();  ++it  )
     {
@@ -514,7 +348,7 @@ ULONG STDMETHODCALLTYPE CMemAlloc::Release()
 
     if( cnt <= 0 )
     {
-        CAutoLockGuard lock_guard(buffers_lock);
+        CMutexLockGuard lock_guard(buffers_lock);
 
         assert( alloc_buffers.empty() );
 
@@ -570,7 +404,7 @@ HRESULT STDMETHODCALLTYPE CMemAlloc::AllocateBuffer( BM_UINT32 buf_size, void** 
 
     try
     {
-        CAutoLockGuard lock_guard(buffers_lock);
+        CMutexLockGuard lock_guard(buffers_lock);
         std::multimap<BM_UINT32,char*>::iterator it = free_buffers.lower_bound(buf_size);
 
         if( it != free_buffers.end() )
@@ -608,7 +442,7 @@ HRESULT STDMETHODCALLTYPE CMemAlloc::AllocateBuffer( BM_UINT32 buf_size, void** 
 HRESULT STDMETHODCALLTYPE CMemAlloc::ReleaseBuffer( void* buffer )
 {
     {
-        CAutoLockGuard lock_guard(buffers_lock);
+        CMutexLockGuard lock_guard(buffers_lock);
         std::map<char*,BM_UINT32>::iterator it = alloc_buffers.find( (char*)buffer );
 
         assert( it != alloc_buffers.end() );
