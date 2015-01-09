@@ -179,4 +179,9 @@ public:
     ~CMutexLockGuard()  { m_obj.Unlock(); }
 };
 
+//=====================================================================================================================
+typedef void (*FTaskAction)( void* ctx );
+
+void StartThread( FTaskAction func, void* ctx );
+
 #endif // !defined(UTILS__H__)

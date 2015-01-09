@@ -1,4 +1,5 @@
 #include <utils.h>
+#include <stdio.h>
 #include <map>
 
 //#define DISABLE_CUSTOM_ALLOCATOR

@@ -26,6 +26,7 @@
   <ItemGroup>
     <ClCompile Include="gen\DeckLinkAPI-iid.c" />
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\StartThread-win32.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Midl Include="DeckLinkSDK\Win\include\DeckLinkAPI.idl" />
