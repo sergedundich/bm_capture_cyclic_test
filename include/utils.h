@@ -2,6 +2,7 @@
 #define UTILS__H__
 #include <assert.h>
 #include <stdint.h>
+#include <stdexcept>
 #include <DeckLinkAPI.h>
 
 #if defined(_WIN32)
@@ -9,35 +10,19 @@
 #include <comutil.h>
 #include <windows.h>
 
-inline void WaitSec( unsigned duration_sec )
-{
-    Sleep( duration_sec*1000 );
-}
-
-inline IDeckLinkIterator* CreateDeckLinkIteratorInstance()
-{
-    LPVOID  p = NULL;
-    HRESULT  hr = CoCreateInstance(
-                                    CLSID_CDeckLinkIterator,  NULL,  CLSCTX_ALL,
-                                    IID_IDeckLinkIterator,  &p
-                                    );
-
-    if ( FAILED(hr) )
-    {
-        return NULL;
-    }
-
-    assert( p != NULL );
-    return  static_cast<IDeckLinkIterator*>(p);
-}
-
-typedef unsigned long BM_UINT32;
-
+//---------------------------------------------------------------------------------------------------------------------
 inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
 {
     return InterlockedExchangeAdd( (volatile LONG*)p, x );
 }
 
+//---------------------------------------------------------------------------------------------------------------------
+inline void WaitSec( unsigned duration_sec )
+{
+    Sleep( duration_sec*1000 );
+}
+
+//---------------------------------------------------------------------------------------------------------------------
 inline bool InitCom()
 {
     //  Initialize COM on this thread
@@ -51,6 +36,7 @@ inline bool InitCom()
     return true;
 }
 
+//---------------------------------------------------------------------------------------------------------------------
 class CMutex
 {
     CRITICAL_SECTION  m_obj;
@@ -70,12 +56,32 @@ public:
     void Unlock()  { ::LeaveCriticalSection(&m_obj); }
 };
 
+//---------------------------------------------------------------------------------------------------------------------
+inline IDeckLinkIterator* CreateDeckLinkIteratorInstance()
+{
+    LPVOID  p = NULL;
+    HRESULT  hr = CoCreateInstance(
+                                    CLSID_CDeckLinkIterator,  NULL,  CLSCTX_ALL,
+                                    IID_IDeckLinkIterator,  &p
+                                    );
+
+    if ( FAILED(hr) )
+    {
+        return NULL;
+    }
+
+    assert( p != NULL );
+    return  static_cast<IDeckLinkIterator*>(p);
+}
+
+typedef unsigned long BM_UINT32;
+
 #else // !defined(_WIN32)
 //=====================================================================================================================
 #include <string.h>
 #include <pthread.h>
-#include <stdexcept>
 
+//---------------------------------------------------------------------------------------------------------------------
 #if defined(__APPLE__)
 #include <sys/time.h>
 
@@ -88,22 +94,12 @@ const REFIID IID_IUnknown = CFUUIDGetUUIDBytes(IUnknownUUID);
 #endif
 
 //---------------------------------------------------------------------------------------------------------------------
-#define STDMETHODCALLTYPE
-
-//---------------------------------------------------------------------------------------------------------------------
-inline bool IsEqualGUID( const REFIID& a, const REFIID& b )
-{
-    return memcmp( &a, &b, sizeof(REFIID) ) == 0;
-}
-
-//---------------------------------------------------------------------------------------------------------------------
 inline void WaitSec( unsigned duration_sec )
 {
     sleep(duration_sec);
 }
 
-typedef uint32_t BM_UINT32;
-
+//---------------------------------------------------------------------------------------------------------------------
 #if defined(__i386__) || defined(__amd64__)
 
 inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
@@ -116,8 +112,10 @@ inline int32_t Int32AtomicAdd( volatile int32_t* p, int32_t x )
 #error "Unsupported CPU architecture"
 #endif
 
+//---------------------------------------------------------------------------------------------------------------------
 inline bool InitCom()  { return true; }
 
+//---------------------------------------------------------------------------------------------------------------------
 class CMutex
 {
     pthread_mutex_t m_mutex;
@@ -158,6 +156,16 @@ public:
         }
     }
 };
+
+//---------------------------------------------------------------------------------------------------------------------
+#define STDMETHODCALLTYPE
+
+inline bool IsEqualGUID( const REFIID& a, const REFIID& b )
+{
+    return memcmp( &a, &b, sizeof(REFIID) ) == 0;
+}
+
+typedef uint32_t BM_UINT32;
 
 #endif // defined(_WIN32) || !defined(_WIN32)
 

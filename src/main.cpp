@@ -4,7 +4,6 @@
 //#define DISABLE_CUSTOM_ALLOCATOR
 //#define DISABLE_INPUT_CALLBACK
 //#define DISABLE_SIGNAL_STOP_DETECTION
-BMDDisplayMode  g_display_mode = bmdModeHD720p5994;
 
 //=====================================================================================================================
 class CInputCallback : public IDeckLinkInputCallback
@@ -13,10 +12,12 @@ class CInputCallback : public IDeckLinkInputCallback
     volatile int32_t  frame_count, signal_frame_count;
 
 public:
+    BMDDisplayMode  init_display_mode;
     volatile BMDDisplayMode  display_mode;
 
 public:
-    CInputCallback() : ref_count(0), frame_count(0), signal_frame_count(0), display_mode(bmdModeUnknown)  {}
+    CInputCallback() : ref_count(0), frame_count(0), signal_frame_count(0),
+                                                init_display_mode(bmdModeHD720p5994), display_mode(bmdModeUnknown)  {}
 
     // overrides from IDeckLinkInputCallback
     virtual HRESULT STDMETHODCALLTYPE VideoInputFormatChanged(
@@ -180,7 +181,7 @@ HRESULT STDMETHODCALLTYPE CInputCallback::VideoInputFrameArrived(
             }
         }
 #ifndef DISABLE_SIGNAL_STOP_DETECTION
-        else if(  signal_frame_count > 0  &&  g_display_mode == display_mode  )
+        else if(  signal_frame_count > 0  &&  init_display_mode == display_mode  )
         {
             display_mode = bmdModeUnknown;
         }
@@ -500,8 +501,9 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
     else
     {
 #endif
-        printf("input->EnableVideoInput display_mode=%s\n", DisplayModeName(g_display_mode) );
-        hr = input->EnableVideoInput( g_display_mode, bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection );
+        g_callback.display_mode = g_callback.init_display_mode;
+        printf("input->EnableVideoInput display_mode=%s\n", DisplayModeName(g_callback.display_mode) );
+        hr = input->EnableVideoInput( g_callback.display_mode, bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection );
         if( FAILED(hr) )
         {
             fprintf( stderr, "input->EnableVideoInput failed\n" );
@@ -517,7 +519,6 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
             else
             {
 #ifndef DISABLE_INPUT_CALLBACK
-                g_callback.display_mode = g_display_mode;
                 printf("input->SetCallback(obj)...\n");
                 hr = input->SetCallback(&g_callback);
                 if( FAILED(hr) )
@@ -535,7 +536,7 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
                     }
                     else
                     {
-                        for(  unsigned n = 20; n  &&  g_callback.display_mode == g_display_mode;  --n  )
+                        for(  unsigned n = 20; n  &&  g_callback.display_mode == g_callback.init_display_mode;  --n  )
                         {
                             printf( "Video+Audio Capture remaining %u sec...\n", n );
                             WaitSec(1);
@@ -592,7 +593,7 @@ void test_iteration( IDeckLink* deckLink, unsigned long j )
 
     if( g_callback.display_mode != bmdModeUnknown )
     {
-        g_display_mode = g_callback.display_mode;
+        g_callback.init_display_mode = g_callback.display_mode;
     }
 }
 
