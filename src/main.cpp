@@ -3,7 +3,7 @@
 #include <map>
 
 //#define DISABLE_CUSTOM_ALLOCATOR
-//#define DISABLE_INPUT_CALLBACK
+//#define DISABLE_SELECT_SDI
 //#define DISABLE_SIGNAL_STOP_DETECTION
 
 //=====================================================================================================================
@@ -13,12 +13,11 @@ class CInputCallback : public IDeckLinkInputCallback
     volatile int32_t  frame_count, signal_frame_count;
 
 public:
-    BMDDisplayMode  init_display_mode;
-    volatile BMDDisplayMode  display_mode;
+    BMDDisplayMode  display_mode;
+    CWaitableCondition  need_restart;
 
 public:
-    CInputCallback() : ref_count(0), frame_count(0), signal_frame_count(0),
-                                                init_display_mode(bmdModeHD720p5994), display_mode(bmdModeUnknown)  {}
+    CInputCallback() : ref_count(0), frame_count(0), signal_frame_count(0), display_mode(bmdModeHD720p5994)  {}
 
     // overrides from IDeckLinkInputCallback
     virtual HRESULT STDMETHODCALLTYPE VideoInputFormatChanged(
@@ -141,9 +140,10 @@ HRESULT STDMETHODCALLTYPE CInputCallback::VideoInputFormatChanged(
                                             ( flags & bmdDetectedVideoInputDualStream3D ? "3D " : "" )
                                             );
 
-    if( display_mode != bmdModeUnknown )
+    if( !need_restart.Value() )
     {
         display_mode = displayModeId;
+        need_restart.SetTrue();
     }
 
     return S_OK;
@@ -157,15 +157,15 @@ HRESULT STDMETHODCALLTYPE CInputCallback::VideoInputFrameArrived(
 {
     if( videoFrame != 0 )
     {
+        BMDTimeValue video_time, d;
+        videoFrame->GetStreamTime( &video_time, &d, 240000 );
+
         Int32AtomicAdd( &frame_count, 1 );
 
         if( ( videoFrame->GetFlags() & bmdFrameHasNoInputSource ) == 0 )
         {
             if( Int32AtomicAdd( &signal_frame_count, 1 ) == 0 )
             {
-                BMDTimeValue video_time, d;
-                videoFrame->GetStreamTime( &video_time, &d, 240000 );
-
                 if( audioPacket != 0 )
                 {
                     BMDTimeValue audio_time;
@@ -182,9 +182,11 @@ HRESULT STDMETHODCALLTYPE CInputCallback::VideoInputFrameArrived(
             }
         }
 #ifndef DISABLE_SIGNAL_STOP_DETECTION
-        else if(  signal_frame_count > 0  &&  init_display_mode == display_mode  )
+        else if(  signal_frame_count > 0  &&  !need_restart.Value()  )
         {
-            display_mode = bmdModeUnknown;
+            printf( "CInputCallback::VideoInputFrameArrived: signal stopped - video_time=%lld/240000\n",
+                                                                                            (long long)video_time  );
+            need_restart.SetTrue();
         }
 #endif
     }
@@ -309,12 +311,12 @@ bool VerifyMagicData( const void* ptr, size_t sz )
     uint32_t x1 = *p;
     const uint32_t* p2 = p;
 
-    for(  ;  ++p < p1  &&  *p == x1;  x = (uint32_t)( (uint64_t)x*g_magic_factor % g_magic_base )  );
+    while(  ++p < p1  &&  *p == x1  );
 
-    printf(  "ALERT!!! Buffer verification failed: ptr=0x%0" PRINTF_PTR_SIZE
-                                                    "llx, total_size=%lu, valid_size=%lu, content=%lu*{0x%08lx}...\n",
+    printf(  "\nALERT!!! Buffer verification failed: ptr=0x%0" PRINTF_PTR_SIZE
+                                                "llx, total_size=%lu, valid_size=%lu, content=%lu*{0x%08lx}...\n\n",
                 (unsigned long long)ptr,  (unsigned long)sz,  (unsigned long)( (const char*)p2 - (const char*)ptr ),
-                                            (unsigned long)( (const char*)p - (const char*)p2 ),  (unsigned long)x1  );
+                                                                    (unsigned long)( p - p2 ),  (unsigned long)x1  );
     return false;
 }
 
@@ -475,126 +477,179 @@ HRESULT STDMETHODCALLTYPE CMemAlloc::Decommit(void)
 }
 
 //=====================================================================================================================
-static CMemAlloc  g_alloc;
-static CInputCallback  g_callback;
+class CDeviceItem
+{
+public:
+    int  index;
+    IDeckLink* deck_link;
+    CMemAlloc  alloc;
+    CInputCallback  callback;
+
+    CDeviceItem(): index(-1), deck_link(NULL)  {}
+    ~CDeviceItem()  {  if( deck_link != NULL)  deck_link->Release();  }
+};
+
+#define VALIDATION_RESERVE  0x40000000L
+static volatile int32_t g_thread_count = VALIDATION_RESERVE;
+static CWaitableCondition  g_test_finished;
+static const size_t g_items_count = 16;
+static CDeviceItem g_items[g_items_count];
 
 //---------------------------------------------------------------------------------------------------------------------
-void test_iteration( IDeckLink* deckLink, unsigned long j )
+static void ThreadFunc( void* ctx )
 {
-    printf( "\nVideo+Audio Capture Testing Iteration #%lu started!\n", j );
+    CDeviceItem& item = *(CDeviceItem*)ctx;
+    assert( item.deck_link != NULL );
 
-    IDeckLinkInput* input;
-    printf("deckLink->QueryInterface(IID_IDeckLinkInput)...\n");
-    HRESULT hr = deckLink->QueryInterface( IID_IDeckLinkInput, (void**)&input );
-    if( FAILED(hr) )
-    {
-        fprintf( stderr, "deckLink->QueryInterface(IID_IDeckLinkInput) failed\n" );
-        return;
-    }
+    Int32AtomicAdd( &g_thread_count, 1 );
 
-#ifndef DISABLE_CUSTOM_ALLOCATOR
-    printf("input->SetVideoInputFrameMemoryAllocator...\n");
-    hr = input->SetVideoInputFrameMemoryAllocator(&g_alloc);
-    if( FAILED(hr) )
+    while( g_thread_count > VALIDATION_RESERVE )
     {
-        fprintf( stderr, "input->SetVideoInputFrameMemoryAllocator(obj) failed\n" );
-    }
-    else
-    {
-#endif
-        g_callback.display_mode = g_callback.init_display_mode;
-        printf("input->EnableVideoInput display_mode=%s\n", DisplayModeName(g_callback.display_mode) );
-        hr = input->EnableVideoInput( g_callback.display_mode, bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection );
+        HRESULT hr;
+        printf( "\n[%d] Starting Video+Audio Capture...\n", item.index );
+#ifndef DISABLE_SELECT_SDI
+        IDeckLinkConfiguration* conf;
+
+        printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkConfiguration)...\n", item.index );
+        hr = item.deck_link->QueryInterface( IID_IDeckLinkConfiguration, (void**)&conf );
         if( FAILED(hr) )
         {
-            fprintf( stderr, "input->EnableVideoInput failed\n" );
+            fprintf( stderr, "[%d] IDeckLink::QueryInterface(IID_IDeckLinkConfiguration) failed\n", item.index  );
         }
         else
         {
-            printf("input->EnableAudioInput...\n");
-            hr = input->EnableAudioInput( bmdAudioSampleRate48kHz, bmdAudioSampleType32bitInteger, 16 );
-            if( FAILED(hr) )
-            {
-                fprintf( stderr, "input->EnableAudioInput failed\n" );
-            }
-            else
-            {
-#ifndef DISABLE_INPUT_CALLBACK
-                printf("input->SetCallback(obj)...\n");
-                hr = input->SetCallback(&g_callback);
-                if( FAILED(hr) )
-                {
-                    fprintf( stderr, "input->SetCallback failed\n" );
-                }
-                else
-                {
-#endif
-                    printf("input->StartStreams...\n");
-                    hr = input->StartStreams();
-                    if( FAILED(hr) )
-                    {
-                        fprintf( stderr, "input->StartStreams failed\n" );
-                    }
-                    else
-                    {
-                        for(  unsigned n = 20; n  &&  g_callback.display_mode == g_callback.init_display_mode;  --n  )
-                        {
-                            printf( "Video+Audio Capture remaining %u sec...\n", n );
-                            WaitSec(1);
-                        }
-
-                        printf("input->StopStreams...\n");
-                        hr = input->StopStreams();
-                        if( FAILED(hr) )
-                        {
-                            fprintf( stderr, "input->StopStreams failed\n" );
-                        }
-                    }
-
-#ifndef DISABLE_INPUT_CALLBACK
-                    printf("input->SetCallback(NULL)...\n");
-                    hr = input->SetCallback(NULL);
-                    if( FAILED(hr) )
-                    {
-                        fprintf( stderr, "input->SetCallback failed\n" );
-                    }
-                }
+            conf->SetInt( bmdDeckLinkConfigVideoInputConnection, bmdVideoConnectionSDI );
+        }
 #endif
 
-                printf("input->DisableAudioInput...\n");
-                hr = input->DisableAudioInput();
-                if( FAILED(hr) )
-                {
-                    fprintf( stderr, "input->DisableAudioInput failed\n" );
-                }
-            }
-
-            printf("input->DisableVideoInput...\n");
-            hr = input->DisableVideoInput();
-            if( FAILED(hr) )
-            {
-                fprintf( stderr, "input->DisableVideoInput failed\n" );
-            }
+        IDeckLinkInput* input;
+        printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkInput)...\n", item.index );
+        hr = item.deck_link->QueryInterface( IID_IDeckLinkInput, (void**)&input );
+        if( FAILED(hr) )
+        {
+            fprintf( stderr, "[%d] IDeckLink::QueryInterface(IID_IDeckLinkInput) failed\n", item.index  );
+            break;
         }
 
 #ifndef DISABLE_CUSTOM_ALLOCATOR
-#if 0
-        hr = input->SetVideoInputFrameMemoryAllocator(NULL);
+        printf( "[%d] IDeckLinkInput::SetVideoInputFrameMemoryAllocator...\n", item.index );
+        hr = input->SetVideoInputFrameMemoryAllocator(&item.alloc);
         if( FAILED(hr) )
         {
-            fprintf( stderr, "input->SetVideoInputFrameMemoryAllocator(NULL) failed\n" );
+            fprintf( stderr, "[%d] IDeckLinkInput::SetVideoInputFrameMemoryAllocator(obj) failed\n", item.index );
+        }
+        else
+        {
+#endif
+            printf( "[%d] IDeckLinkInput::EnableVideoInput display_mode=%s\n", item.index,
+                                                                        DisplayModeName(item.callback.display_mode) );
+            hr = input->EnableVideoInput(
+                                    item.callback.display_mode, bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection );
+
+            if( FAILED(hr) )
+            {
+                fprintf( stderr, "[%d] IDeckLinkInput::EnableVideoInput failed\n", item.index );
+            }
+            else
+            {
+                printf( "[%d] IDeckLinkInput::EnableAudioInput...\n", item.index );
+                hr = input->EnableAudioInput( bmdAudioSampleRate48kHz, bmdAudioSampleType32bitInteger, 16 );
+                if( FAILED(hr) )
+                {
+                    fprintf( stderr, "[%d] IDeckLinkInput::EnableAudioInput failed\n", item.index );
+                }
+                else
+                {
+                    printf("[%d] IDeckLinkInput::SetCallback(obj)...\n");
+                    hr = input->SetCallback(&item.callback);
+                    if( FAILED(hr) )
+                    {
+                        fprintf( stderr, "[%d] IDeckLinkInput::SetCallback failed\n", item.index );
+                    }
+                    else
+                    {
+                        printf( "[%d] IDeckLinkInput::StartStreams...\n", item.index );
+                        hr = input->StartStreams();
+                        if( FAILED(hr) )
+                        {
+                            fprintf( stderr, "[%d] IDeckLinkInput::StartStreams failed\n", item.index );
+                        }
+                        else
+                        {
+                            item.callback.need_restart.Wait();
+
+                            printf("[%d] IDeckLinkInput::StopStreams...\n", item.index);
+                            hr = input->StopStreams();
+                            if( FAILED(hr) )
+                            {
+                                fprintf( stderr, "[%d] IDeckLinkInput::StopStreams failed\n", item.index );
+                            }
+                        }
+
+                        printf( "[%d] IDeckLinkInput::SetCallback(NULL)...\n", item.index);
+                        hr = input->SetCallback(NULL);
+                        if( FAILED(hr) )
+                        {
+                            fprintf( stderr, "[%d] IDeckLinkInput::SetCallback failed\n", item.index );
+                        }
+                    }
+
+                    printf( "[%d] IDeckLinkInput::DisableAudioInput...\n", item.index );
+                    hr = input->DisableAudioInput();
+                    if( FAILED(hr) )
+                    {
+                        fprintf( stderr, "[%d] IDeckLinkInput::DisableAudioInput failed\n", item.index );
+                    }
+                }
+
+                printf( "[%d] IDeckLinkInput::DisableVideoInput...\n", item.index );
+                hr = input->DisableVideoInput();
+                if( FAILED(hr) )
+                {
+                    fprintf( stderr, "[%d] IDeckLinkInput::DisableVideoInput failed\n", item.index );
+                }
+            }
+
+#ifndef DISABLE_CUSTOM_ALLOCATOR
+#if 0
+            hr = input->SetVideoInputFrameMemoryAllocator(NULL);
+            if( FAILED(hr) )
+            {
+                fprintf( stderr, "[%d] IDeckLinkInput::SetVideoInputFrameMemoryAllocator(NULL) failed\n", item.index );
+            }
+#endif
         }
 #endif
+        printf( "[%d] IDeckLinkInput::Release...\n", item.index );
+        input->Release();
+
+        printf( "[%d] Stopped Video+Audio Capture.\n\n", item.index );
+        item.callback.need_restart.SetFalse();
+
+        if( g_thread_count < VALIDATION_RESERVE )
+        {
+            break;
+        }
+
+        printf( "[%d] Waiting 1 sec...\n\n", item.index );
+        WaitSec(1);
+
+        if( !item.alloc.Reset() )
+        {
+            Int32AtomicAdd( &g_thread_count, -VALIDATION_RESERVE );
+
+            for( size_t j = 0; j < g_items_count; ++j )
+            {
+                g_items[j].callback.need_restart.SetTrue();
+            }
+
+            break;
+        }
     }
-#endif
-    printf("input->Release...\n");
-    input->Release();
 
-    printf( "Video+Audio Capture Testing Iteration #%lu finished!\n\n", j );
-
-    if( g_callback.display_mode != bmdModeUnknown )
+    if( Int32AtomicAdd( &g_thread_count, -1 ) <= 1 )
     {
-        g_callback.init_display_mode = g_callback.display_mode;
+        g_test_finished.SetTrue();
     }
 }
 
@@ -609,12 +664,9 @@ int main( int argc, char* argv[] )
     IDeckLinkIterator*  deckLinkIterator = CreateDeckLinkIteratorInstance();
     if( deckLinkIterator == NULL )
     {
-        fprintf( stderr, "A DeckLink iterator could not be created. The DeckLink drivers may not be installed.\n" );
+        fprintf( stderr, "A DeckLink iterator could not be created. Probably DeckLink drivers not installed.\n" );
         return 1;
     }
-
-    IDeckLink*  deckLink;
-    int  numDevices = 0;
 
     {
         // We can get the version of the API like this:
@@ -638,28 +690,19 @@ int main( int argc, char* argv[] )
         }
     }
 
-    HRESULT hr = deckLinkIterator->Next(&deckLink); // first device
-    if( FAILED(hr) )
+    IDeckLink*  deck_link;
+
+    for(  int j = 0;  j < g_items_count  &&  deckLinkIterator->Next(&deck_link) == S_OK;  ++j  )
     {
-        fprintf( stderr, "No Blackmagic Design devices were found.\n" );
-        deckLinkIterator->Release();
-        return 1;
+        g_items[j].index = j;
+        g_items[j].deck_link = deck_link;
+        StartThread( &ThreadFunc, &g_items[j] );
     }
 
-    for( unsigned long j = 0; j < 0x80000000UL; ++j )
-    {
-        test_iteration( deckLink, j+1 );
-        printf("\nWaiting 1 sec...\n");
-        WaitSec(1);
+    g_test_finished.Wait();
+    printf("\n!!!VALIDATION FAILED!!!\nPress ENTER to exit...\n");
+    getc(stdin);
 
-        if( !g_alloc.Reset() )
-        {
-            printf("\nPress ENTER to continue...\n");
-            getc(stdin);
-        }
-    }
-
-    deckLink->Release();
     deckLinkIterator->Release();
     return 0;
 }

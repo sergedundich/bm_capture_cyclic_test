@@ -57,6 +57,28 @@ public:
 };
 
 //---------------------------------------------------------------------------------------------------------------------
+class CWaitableCondition
+{
+    HANDLE  m_h;
+
+public:
+    CWaitableCondition( bool value = false ) : m_h( ::CreateEvent( NULL, FALSE, value, NULL ) )
+    {
+        if( m_h == NULL )
+        {
+            throw std::runtime_error("CWaitableCondition: CreateEvent failed");
+        }
+    }
+
+    ~CWaitableCondition()  { ::CloseHandle(m_h); }
+
+    void Wait()  { ::WaitForSingleObject( m_h, INFINITE ); }
+    bool Value() const  { return ::WaitForSingleObject( m_h, 0 ) != WAIT_TIMEOUT; }
+    void SetTrue()  { ::SetEvent(m_h); }
+    void SetFalse()  { ::ResetEvent(m_h); }
+};
+
+//---------------------------------------------------------------------------------------------------------------------
 inline IDeckLinkIterator* CreateDeckLinkIteratorInstance()
 {
     LPVOID  p = NULL;
@@ -131,30 +153,53 @@ public:
         }
     }
 
-    ~CMutex()
-    {
-        pthread_mutex_destroy(&m_mutex);
-    }
+    ~CMutex()  { pthread_mutex_destroy(&m_mutex); }
 
-    void Lock()
-    {
-        int err = pthread_mutex_lock(pMutex);
+    void Lock()  { pthread_mutex_lock(&m_mutex); }
+    void Unlock()  { pthread_mutex_unlock(&m_mutex); }
 
-        if( err != 0 )
-        {
-            throw std::runtime_error("pthread_mutex_lock failed");
-        }
-    }
+    pthread_mutex_t* Ptr()  { return &m_mutex; }
+};
 
-    void Unlock()
-    {
-        int err = pthread_mutex_unlock(pMutex);
+//-----------------------------------------------------------------------------
+class CWaitableCondition
+{
+	CMutex  m_mutex;
+	pthread_cond_t  m_cond;
+	bool  m_value;
 
-        if( err != 0 )
-        {
-            throw std::runtime_error("pthread_mutex_unlock failed");
-        }
-    }
+public:
+	CWaitableCondition( bool value = false ) : m_value(value)  {}
+
+	void Wait()
+	{
+        m_mutex.Lock();
+
+		if( !m_value )
+		{
+			pthread_cond_wait( &m_cond, m_mutex.Ptr() );
+		}
+
+        m_mutex.Unlock();
+	}
+
+	bool Value() const  {  return  m_value;  }
+
+	void SetTrue()
+	{
+        m_mutex.Lock();
+
+		m_value = true;
+		pthread_cond_broadcast(&m_cond);
+        m_mutex.Unlock();
+	}
+
+	void SetFalse()
+	{
+        m_mutex.Lock();
+		m_value = false;
+        m_mutex.Unlock();
+	}
 };
 
 //---------------------------------------------------------------------------------------------------------------------
