@@ -164,42 +164,42 @@ public:
 //-----------------------------------------------------------------------------
 class CWaitableCondition
 {
-	CMutex  m_mutex;
-	pthread_cond_t  m_cond;
-	bool  m_value;
+    CMutex  m_mutex;
+    pthread_cond_t  m_cond;
+    bool  m_value;
 
 public:
-	CWaitableCondition( bool value = false ) : m_value(value)  {}
+    CWaitableCondition( bool value = false ) : m_value(value)  {}
 
-	void Wait()
-	{
+    void Wait()
+    {
         m_mutex.Lock();
 
-		if( !m_value )
-		{
-			pthread_cond_wait( &m_cond, m_mutex.Ptr() );
-		}
+        if( !m_value )
+        {
+            pthread_cond_wait( &m_cond, m_mutex.Ptr() );
+        }
 
         m_mutex.Unlock();
-	}
+    }
 
-	bool Value() const  {  return  m_value;  }
+    bool Value() const  {  return  m_value;  }
 
-	void SetTrue()
-	{
+    void SetTrue()
+    {
         m_mutex.Lock();
 
-		m_value = true;
-		pthread_cond_broadcast(&m_cond);
+        m_value = true;
+        pthread_cond_broadcast(&m_cond);
         m_mutex.Unlock();
-	}
+    }
 
-	void SetFalse()
-	{
+    void SetFalse()
+    {
         m_mutex.Lock();
-		m_value = false;
+        m_value = false;
         m_mutex.Unlock();
-	}
+    }
 };
 
 //---------------------------------------------------------------------------------------------------------------------

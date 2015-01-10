@@ -4,7 +4,7 @@
 
 //=====================================================================================================================
 namespace {
-//-----------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------------------------------------
 struct SParam
 {
     FTaskAction Func;
@@ -13,7 +13,7 @@ struct SParam
     SParam( FTaskAction func, void* ctx ) : Func(func), Ctx(ctx)  {}
 };
 
-//-----------------------------------------------------------------------------
+//---------------------------------------------------------------------------------------------------------------------
 static void* ThreadProc( void* param )
 {
     SParam* p = (SParam*)param;
@@ -24,18 +24,18 @@ static void* ThreadProc( void* param )
 
     InitCom();
 
-	try
-	{
-		(*func)(ctx);
-	}
-	catch( const std::exception& ex )
-	{
-		fprintf( stderr, "ThreadProc: %s\n", ex.what() );
-	}
-	catch(...)
-	{
-		fprintf( stderr, "ThreadProc: UNKNOWN ERROR\n" );
-	}
+    try
+    {
+        (*func)(ctx);
+    }
+    catch( const std::exception& ex )
+    {
+        fprintf( stderr, "ThreadProc: %s\n", ex.what() );
+    }
+    catch(...)
+    {
+        fprintf( stderr, "ThreadProc: UNKNOWN ERROR\n" );
+    }
 
     return NULL;
 }
@@ -45,14 +45,14 @@ static void* ThreadProc( void* param )
 void ThreadStart( FTaskAction func, void* ctx )
 {
     std::auto_ptr<SParam> paParam( new SParam(func,ctx) );
-	pthread_t thr;
-	int err = pthread_create( &thr, NULL, &ThreadProc, paParam.get() );
+    pthread_t thr;
+    int err = pthread_create( &thr, NULL, &ThreadProc, paParam.get() );
 
-	if( err != 0 )
-	{
-		fprintf( stderr, "StartThread: pthread_create failed.\n" );
+    if( err != 0 )
+    {
+        fprintf( stderr, "StartThread: pthread_create failed.\n" );
         return;
-	}
+    }
 
     pthread_detach(thr);
     paParam.release();
