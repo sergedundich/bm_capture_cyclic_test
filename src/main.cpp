@@ -514,7 +514,7 @@ static void ThreadFunc( void* ctx )
         hr = item.deck_link->QueryInterface( IID_IDeckLinkConfiguration, (void**)&conf );
         if( FAILED(hr) )
         {
-            fprintf( stderr, "[%d] IDeckLink::QueryInterface(IID_IDeckLinkConfiguration) failed\n", item.index  );
+            printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkConfiguration) failed\n", item.index  );
         }
         else
         {
@@ -527,7 +527,7 @@ static void ThreadFunc( void* ctx )
         hr = item.deck_link->QueryInterface( IID_IDeckLinkInput, (void**)&input );
         if( FAILED(hr) )
         {
-            fprintf( stderr, "[%d] IDeckLink::QueryInterface(IID_IDeckLinkInput) failed\n", item.index  );
+            printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkInput) failed\n", item.index  );
             break;
         }
 
@@ -536,7 +536,7 @@ static void ThreadFunc( void* ctx )
         hr = input->SetVideoInputFrameMemoryAllocator(&item.alloc);
         if( FAILED(hr) )
         {
-            fprintf( stderr, "[%d] IDeckLinkInput::SetVideoInputFrameMemoryAllocator(obj) failed\n", item.index );
+            printf( "[%d] IDeckLinkInput::SetVideoInputFrameMemoryAllocator(obj) failed\n", item.index );
         }
         else
         {
@@ -548,7 +548,7 @@ static void ThreadFunc( void* ctx )
 
             if( FAILED(hr) )
             {
-                fprintf( stderr, "[%d] IDeckLinkInput::EnableVideoInput failed\n", item.index );
+                printf( "[%d] IDeckLinkInput::EnableVideoInput failed\n", item.index );
             }
             else
             {
@@ -556,7 +556,7 @@ static void ThreadFunc( void* ctx )
                 hr = input->EnableAudioInput( bmdAudioSampleRate48kHz, bmdAudioSampleType32bitInteger, 16 );
                 if( FAILED(hr) )
                 {
-                    fprintf( stderr, "[%d] IDeckLinkInput::EnableAudioInput failed\n", item.index );
+                    printf( "[%d] IDeckLinkInput::EnableAudioInput failed\n", item.index );
                 }
                 else
                 {
@@ -564,7 +564,7 @@ static void ThreadFunc( void* ctx )
                     hr = input->SetCallback(&item.callback);
                     if( FAILED(hr) )
                     {
-                        fprintf( stderr, "[%d] IDeckLinkInput::SetCallback failed\n", item.index );
+                        printf( "[%d] IDeckLinkInput::SetCallback failed\n", item.index );
                     }
                     else
                     {
@@ -572,7 +572,7 @@ static void ThreadFunc( void* ctx )
                         hr = input->StartStreams();
                         if( FAILED(hr) )
                         {
-                            fprintf( stderr, "[%d] IDeckLinkInput::StartStreams failed\n", item.index );
+                            printf( "[%d] IDeckLinkInput::StartStreams failed\n", item.index );
                         }
                         else
                         {
@@ -582,7 +582,7 @@ static void ThreadFunc( void* ctx )
                             hr = input->StopStreams();
                             if( FAILED(hr) )
                             {
-                                fprintf( stderr, "[%d] IDeckLinkInput::StopStreams failed\n", item.index );
+                                printf( "[%d] IDeckLinkInput::StopStreams failed\n", item.index );
                             }
                         }
 
@@ -590,7 +590,7 @@ static void ThreadFunc( void* ctx )
                         hr = input->SetCallback(NULL);
                         if( FAILED(hr) )
                         {
-                            fprintf( stderr, "[%d] IDeckLinkInput::SetCallback failed\n", item.index );
+                            printf( "[%d] IDeckLinkInput::SetCallback failed\n", item.index );
                         }
                     }
 
@@ -598,7 +598,7 @@ static void ThreadFunc( void* ctx )
                     hr = input->DisableAudioInput();
                     if( FAILED(hr) )
                     {
-                        fprintf( stderr, "[%d] IDeckLinkInput::DisableAudioInput failed\n", item.index );
+                        printf( "[%d] IDeckLinkInput::DisableAudioInput failed\n", item.index );
                     }
                 }
 
@@ -606,7 +606,7 @@ static void ThreadFunc( void* ctx )
                 hr = input->DisableVideoInput();
                 if( FAILED(hr) )
                 {
-                    fprintf( stderr, "[%d] IDeckLinkInput::DisableVideoInput failed\n", item.index );
+                    printf( "[%d] IDeckLinkInput::DisableVideoInput failed\n", item.index );
                 }
             }
 
@@ -615,7 +615,7 @@ static void ThreadFunc( void* ctx )
             hr = input->SetVideoInputFrameMemoryAllocator(NULL);
             if( FAILED(hr) )
             {
-                fprintf( stderr, "[%d] IDeckLinkInput::SetVideoInputFrameMemoryAllocator(NULL) failed\n", item.index );
+                printf( "[%d] IDeckLinkInput::SetVideoInputFrameMemoryAllocator(NULL) failed\n", item.index );
             }
 #endif
         }
@@ -664,7 +664,7 @@ int main( int argc, char* argv[] )
     IDeckLinkIterator*  deckLinkIterator = CreateDeckLinkIteratorInstance();
     if( deckLinkIterator == NULL )
     {
-        fprintf( stderr, "A DeckLink iterator could not be created. Probably DeckLink drivers not installed.\n" );
+        printf( "A DeckLink iterator could not be created. Probably DeckLink drivers not installed.\n" );
         return 1;
     }
 
@@ -690,6 +690,8 @@ int main( int argc, char* argv[] )
         }
     }
 
+    fprintf( stderr, "\nRunning video+audio capture tests...\n" );
+
     IDeckLink*  deck_link;
 
     for(  int j = 0;  j < g_items_count  &&  deckLinkIterator->Next(&deck_link) == S_OK;  ++j  )
@@ -700,7 +702,7 @@ int main( int argc, char* argv[] )
     }
 
     g_test_finished.Wait();
-    printf("\n!!!VALIDATION FAILED!!!\nPress ENTER to exit...\n");
+    fprintf( stderr, "\n!!!VALIDATION FAILED!!!\nPress ENTER to exit...\n" );
     getc(stdin);
 
     deckLinkIterator->Release();
