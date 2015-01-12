@@ -499,28 +499,31 @@ static CDeviceItem g_items[g_items_count];
 static void ThreadFunc( void* ctx )
 {
     CDeviceItem& item = *(CDeviceItem*)ctx;
+    HRESULT hr;
     assert( item.deck_link != NULL );
+
+#ifndef DISABLE_SELECT_SDI
+    IDeckLinkConfiguration* conf = NULL;
+
+    printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkConfiguration)...\n", item.index );
+    hr = item.deck_link->QueryInterface( IID_IDeckLinkConfiguration, (void**)&conf );
+    if( FAILED(hr) )
+    {
+        printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkConfiguration) failed\n", item.index  );
+        assert( conf == NULL );
+        conf = NULL;
+    }
+    else
+    {
+        conf->SetInt( bmdDeckLinkConfigVideoInputConnection, bmdVideoConnectionSDI );
+    }
+#endif
 
     Int32AtomicAdd( &g_thread_count, 1 );
 
     while( g_thread_count > VALIDATION_RESERVE )
     {
-        HRESULT hr;
         printf( "\n[%d] Starting Video+Audio Capture...\n", item.index );
-#ifndef DISABLE_SELECT_SDI
-        IDeckLinkConfiguration* conf;
-
-        printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkConfiguration)...\n", item.index );
-        hr = item.deck_link->QueryInterface( IID_IDeckLinkConfiguration, (void**)&conf );
-        if( FAILED(hr) )
-        {
-            printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkConfiguration) failed\n", item.index  );
-        }
-        else
-        {
-            conf->SetInt( bmdDeckLinkConfigVideoInputConnection, bmdVideoConnectionSDI );
-        }
-#endif
 
         IDeckLinkInput* input;
         printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkInput)...\n", item.index );
@@ -651,6 +654,13 @@ static void ThreadFunc( void* ctx )
     {
         g_test_finished.SetTrue();
     }
+
+#ifndef DISABLE_SELECT_SDI
+    if( conf != NULL )
+    {
+        conf->Release();
+    }
+#endif
 }
 
 //=====================================================================================================================
