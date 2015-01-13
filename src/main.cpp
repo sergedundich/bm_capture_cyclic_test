@@ -13,11 +13,14 @@ class CInputCallback : public IDeckLinkInputCallback
     volatile int32_t  frame_count, signal_frame_count;
 
 public:
+    int index;
     BMDDisplayMode  display_mode;
     CWaitableCondition  need_restart;
 
 public:
-    CInputCallback() : ref_count(0), frame_count(0), signal_frame_count(0), display_mode(bmdModeHD720p5994)  {}
+    CInputCallback() : ref_count(0), frame_count(0), signal_frame_count(0), index(-1), display_mode(bmdModeHD720p5994)
+    {
+    }
 
     // overrides from IDeckLinkInputCallback
     virtual HRESULT STDMETHODCALLTYPE VideoInputFormatChanged(
@@ -130,7 +133,8 @@ HRESULT STDMETHODCALLTYPE CInputCallback::VideoInputFormatChanged(
                                                             )
 {
     BMDDisplayMode displayModeId = displayMode->GetDisplayMode();
-    printf( "CInputCallback::VideoInputFormatChanged: changed=[ %s%s%s], display_mode=%s, flags=[ %s%s%s]\n",
+    printf( "[%d] CInputCallback::VideoInputFormatChanged: changed=[ %s%s%s], display_mode=%s, flags=[ %s%s%s]\n",
+                                            index,
                                             ( events & bmdVideoInputDisplayModeChanged ? "DISP_MODE " : "" ),
                                             ( events & bmdVideoInputFieldDominanceChanged ? "FIELD_DOMINANCE " : "" ),
                                             ( events & bmdVideoInputColorspaceChanged ? "COLORSPACE " : "" ),
@@ -171,14 +175,14 @@ HRESULT STDMETHODCALLTYPE CInputCallback::VideoInputFrameArrived(
                     BMDTimeValue audio_time;
                     audioPacket->GetPacketTime( &audio_time, 240000 );
 
-                    printf(  "CInputCallback::VideoInputFrameArrived: signal started - video_time=%lld/240000, "
-                                        "audio_time=%lld/240000\n",  (long long)video_time,  (long long)audio_time  );
+                    printf(  "[%d] CInputCallback::VideoInputFrameArrived: signal started - video_time=%lld/240000, "
+                                "audio_time=%lld/240000\n",  index,  (long long)video_time,  (long long)audio_time  );
                     fflush(stdout);
                 }
                 else
                 {
-                    printf( "CInputCallback::VideoInputFrameArrived: signal started - video_time=%lld/240000\n",
-                                                                                            (long long)video_time  );
+                    printf( "[%d] CInputCallback::VideoInputFrameArrived: signal started - video_time=%lld/240000\n",
+                                                                                    index,  (long long)video_time  );
                     fflush(stdout);
                 }
             }
@@ -186,8 +190,8 @@ HRESULT STDMETHODCALLTYPE CInputCallback::VideoInputFrameArrived(
 #ifndef DISABLE_SIGNAL_STOP_DETECTION
         else if(  signal_frame_count > 0  &&  !need_restart.Value()  )
         {
-            printf( "CInputCallback::VideoInputFrameArrived: signal stopped - video_time=%lld/240000\n",
-                                                                                            (long long)video_time  );
+            printf( "[%d] CInputCallback::VideoInputFrameArrived: signal stopped - video_time=%lld/240000\n",
+                                                                                    index,  (long long)video_time  );
             need_restart.SetTrue();
         }
 #endif
@@ -202,7 +206,7 @@ HRESULT STDMETHODCALLTYPE CInputCallback::QueryInterface( REFIID riid, void** pp
     if( IsEqualGUID( riid, IID_IDeckLinkInputCallback ) )
     {
         long cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
-        printf( "CInputCallback::QueryInterface(IDeckLinkInputCallback) - new_ref_count=%ld\n", cnt );
+        printf( "[%d] CInputCallback::QueryInterface(IDeckLinkInputCallback) - new_ref_count=%ld\n", index, cnt );
         fflush(stdout);
         *pp = static_cast<IDeckLinkInputCallback*>(this);
         return S_OK;
@@ -211,7 +215,7 @@ HRESULT STDMETHODCALLTYPE CInputCallback::QueryInterface( REFIID riid, void** pp
     if( IsEqualGUID( riid, IID_IUnknown ) )
     {
         long cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
-        printf( "CInputCallback::QueryInterface(IUnknown) - new_ref_count=%ld\n", cnt );
+        printf( "[%d] CInputCallback::QueryInterface(IUnknown) - new_ref_count=%ld\n", index, cnt );
         fflush(stdout);
         *pp = static_cast<IUnknown*>(this);
         return S_OK;
@@ -224,7 +228,7 @@ HRESULT STDMETHODCALLTYPE CInputCallback::QueryInterface( REFIID riid, void** pp
 ULONG STDMETHODCALLTYPE CInputCallback::AddRef(void)
 {
     long cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
-    printf( "CInputCallback::AddRef - new_ref_count=%ld\n", cnt );
+    printf( "[%d] CInputCallback::AddRef - new_ref_count=%ld\n", index, cnt );
     fflush(stdout);
     return cnt;
 }
@@ -236,13 +240,13 @@ ULONG STDMETHODCALLTYPE CInputCallback::Release(void)
 
     if( cnt <= 0 )
     {
-        printf( "CInputCallback::Release - new_ref_count=%ld, total_frame_count=%ld, signal_frame_count=%ld\n",
-                                                            cnt, (long)frame_count, (long)signal_frame_count );
+        printf(  "[%d] CInputCallback::Release - new_ref_count=%ld, total_frame_count=%ld, signal_frame_count=%ld\n",
+                                                            index, cnt, (long)frame_count, (long)signal_frame_count  );
         frame_count = 0;  signal_frame_count = 0;
     }
     else
     {
-        printf( "CInputCallback::Release - new_ref_count=%ld\n", cnt );
+        printf( "[%d] CInputCallback::Release - new_ref_count=%ld\n", index, cnt );
     }
 
     return cnt;
@@ -257,7 +261,10 @@ class CMemAlloc: public IDeckLinkMemoryAllocator
     std::map<char*,BM_UINT32>  alloc_buffers;
 
 public:
-    CMemAlloc(): ref_count(0)  {}
+    int index;
+
+public:
+    CMemAlloc(): ref_count(0), index(-1)  {}
     bool Reset();
 
     virtual ULONG STDMETHODCALLTYPE AddRef();
@@ -294,7 +301,7 @@ void FillMagicData( void* ptr, size_t sz )
 #define PRINTF_PTR_SIZE "8"
 #endif
 
-bool VerifyMagicData( const void* ptr, size_t sz )
+bool VerifyMagicData( int index, const void* ptr, size_t sz )
 {
     uint32_t x = g_magic_init;
     const uint32_t* p = (const uint32_t*)ptr;
@@ -318,9 +325,9 @@ bool VerifyMagicData( const void* ptr, size_t sz )
 
     while(  ++p < p1  &&  *p == x1  );
 
-    printf(  "\nALERT!!! Buffer verification failed: ptr=0x%0" PRINTF_PTR_SIZE
+    printf(  "\n[%d] ALERT!!! Buffer verification failed: ptr=0x%0" PRINTF_PTR_SIZE
                                                 "llx, total_size=%lu, valid_size=%lu, content=%lu*{0x%08lx}...\n\n",
-                (unsigned long long)ptr,  (unsigned long)sz,  (unsigned long)( (const char*)p2 - (const char*)ptr ),
+        index,  (unsigned long long)ptr,  (unsigned long)sz,  (unsigned long)( (const char*)p2 - (const char*)ptr ),
                                                                     (unsigned long)( p - p2 ),  (unsigned long)x1  );
     return false;
 }
@@ -333,7 +340,7 @@ bool CMemAlloc::Reset()
 
     for(  std::multimap<BM_UINT32,char*>::const_iterator it = free_buffers.begin();  it != free_buffers.end();  ++it  )
     {
-        ok &= VerifyMagicData( it->second, it->first );
+        ok &= VerifyMagicData( index, it->second, it->first );
         delete [] it->second;
     }
 
@@ -345,7 +352,7 @@ bool CMemAlloc::Reset()
 ULONG STDMETHODCALLTYPE CMemAlloc::AddRef()
 {
     long cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
-    printf( "CMemAlloc::AddRef - new_ref_count=%ld\n", cnt );
+    printf( "[%d] CMemAlloc::AddRef - new_ref_count=%ld\n", index, cnt );
     fflush(stdout);
     return cnt;
 }
@@ -354,7 +361,7 @@ ULONG STDMETHODCALLTYPE CMemAlloc::AddRef()
 ULONG STDMETHODCALLTYPE CMemAlloc::Release()
 {
     long cnt = Int32AtomicAdd( &ref_count, -1 ) - 1;
-    printf( "CMemAlloc::Release - new_ref_count=%ld\n", cnt );
+    printf( "[%d] CMemAlloc::Release - new_ref_count=%ld\n", index, cnt );
 
     if( cnt <= 0 )
     {
@@ -385,7 +392,7 @@ HRESULT STDMETHODCALLTYPE CMemAlloc::QueryInterface( REFIID riid, void** pp )
     if( IsEqualGUID( riid, IID_IDeckLinkMemoryAllocator ) )
     {
         long cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
-        printf( "CMemAlloc::QueryInterface(IDeckLinkInputCallback) - new_ref_count=%ld\n", cnt );
+        printf( "[%d] CMemAlloc::QueryInterface(IDeckLinkInputCallback) - new_ref_count=%ld\n", index, cnt );
         *pp = static_cast<IDeckLinkMemoryAllocator*>(this);
         return S_OK;
     }
@@ -393,7 +400,7 @@ HRESULT STDMETHODCALLTYPE CMemAlloc::QueryInterface( REFIID riid, void** pp )
     if( IsEqualGUID( riid, IID_IUnknown ) )
     {
         long cnt = Int32AtomicAdd( &ref_count, 1 ) + 1;
-        printf( "CMemAlloc::QueryInterface(IUnknown) - new_ref_count=%ld\n", cnt );
+        printf( "[%d] CMemAlloc::QueryInterface(IUnknown) - new_ref_count=%ld\n", index, cnt );
         *pp = static_cast<IUnknown*>(this);
         return S_OK;
     }
@@ -406,7 +413,7 @@ HRESULT STDMETHODCALLTYPE CMemAlloc::AllocateBuffer( BM_UINT32 buf_size, void** 
 {
     if( buf_size >= 0x80000000UL )
     {
-        printf( "CMemAlloc::AllocateBuffer: buf_size=0x%08lx is not a sane value.\n", (unsigned long)buf_size );
+        printf( "[%d] CMemAlloc::AllocateBuffer: buf_size=0x%08lx is not a sane value.\n", index, (unsigned long)buf_size );
         fflush(stdout);
         return E_OUTOFMEMORY;
     }
@@ -441,7 +448,7 @@ HRESULT STDMETHODCALLTYPE CMemAlloc::AllocateBuffer( BM_UINT32 buf_size, void** 
     }
     catch(...)
     {
-        printf( "CMemAlloc::AllocateBuffer: allocation failed (buf_size=%lu).\n", (unsigned long)buf_size );
+        printf( "[%d] CMemAlloc::AllocateBuffer: allocation failed (buf_size=%lu).\n", index, (unsigned long)buf_size );
         fflush(stdout);
         return E_OUTOFMEMORY;
     }
@@ -473,14 +480,14 @@ HRESULT STDMETHODCALLTYPE CMemAlloc::ReleaseBuffer( void* buffer )
 //---------------------------------------------------------------------------------------------------------------------
 HRESULT STDMETHODCALLTYPE CMemAlloc::Commit(void)
 {
-    printf("CMemAlloc::Commit\n");
+    printf( "[%d] CMemAlloc::Commit\n", index );
     return S_OK;
 }
 
 //---------------------------------------------------------------------------------------------------------------------
 HRESULT STDMETHODCALLTYPE CMemAlloc::Decommit(void)
 {
-    printf("CMemAlloc::Decommit\n");
+    printf( "[%d] CMemAlloc::Decommit\n", index );
     return S_OK;
 }
 
@@ -488,13 +495,14 @@ HRESULT STDMETHODCALLTYPE CMemAlloc::Decommit(void)
 class CDeviceItem
 {
 public:
-    int  index;
     IDeckLink* deck_link;
     CMemAlloc  alloc;
     CInputCallback  callback;
 
-    CDeviceItem(): index(-1), deck_link(NULL)  {}
+    CDeviceItem(): deck_link(NULL)  {}
     ~CDeviceItem()  {  if( deck_link != NULL)  deck_link->Release();  }
+
+    void SetIndex( int j )  { alloc.index = j; callback.index = j; }
 };
 
 #define VALIDATION_RESERVE  0x40000000L
@@ -513,24 +521,24 @@ static void ThreadFunc( void* ctx )
 #ifndef DISABLE_SELECT_SDI
     IDeckLinkConfiguration* conf = NULL;
 
-    printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkConfiguration)...\n", item.index );
+    printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkConfiguration)...\n", item.callback.index );
     hr = item.deck_link->QueryInterface( IID_IDeckLinkConfiguration, (void**)&conf );
     if( FAILED(hr) )
     {
-        printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkConfiguration) failed.\n", item.index  );
+        printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkConfiguration) failed.\n", item.callback.index  );
         assert( conf == NULL );
         conf = NULL;
     }
     else
     {
         printf( "[%d] IDeckLinkConfiguration::"
-                        "SetInt( bmdDeckLinkConfigVideoInputConnection, bmdVideoConnectionSDI )...\n", item.index  );
+                "SetInt( bmdDeckLinkConfigVideoInputConnection, bmdVideoConnectionSDI )...\n", item.callback.index  );
         hr = conf->SetInt( bmdDeckLinkConfigVideoInputConnection, bmdVideoConnectionSDI );
 
         if( FAILED(hr) )
         {
-            printf( "[%d] IDeckLinkConfiguration::"
-                    "SetInt( bmdDeckLinkConfigVideoInputConnection, bmdVideoConnectionSDI ) failed.\n", item.index  );
+            printf( "[%d] IDeckLinkConfiguration::SetInt( "
+                    "bmdDeckLinkConfigVideoInputConnection, bmdVideoConnectionSDI ) failed.\n", item.callback.index  );
         }
     }
 
@@ -541,32 +549,32 @@ static void ThreadFunc( void* ctx )
 
     while( g_thread_count > VALIDATION_RESERVE )
     {
-        printf( "\n[%d] Starting Video+Audio Capture...\n", item.index );
+        printf( "\n[%d] Starting Video+Audio Capture...\n", item.callback.index );
 
         IDeckLinkInput* input;
-        printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkInput)...\n", item.index );
+        printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkInput)...\n", item.callback.index );
         fflush(stdout);
         hr = item.deck_link->QueryInterface( IID_IDeckLinkInput, (void**)&input );
         if( FAILED(hr) )
         {
-            printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkInput) failed.\n", item.index  );
+            printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkInput) failed.\n", item.callback.index  );
             fflush(stdout);
             break;
         }
 
 #ifndef DISABLE_CUSTOM_ALLOCATOR
-        printf( "[%d] IDeckLinkInput::SetVideoInputFrameMemoryAllocator...\n", item.index );
+        printf( "[%d] IDeckLinkInput::SetVideoInputFrameMemoryAllocator...\n", item.callback.index );
         fflush(stdout);
         hr = input->SetVideoInputFrameMemoryAllocator(&item.alloc);
         if( FAILED(hr) )
         {
-            printf( "[%d] IDeckLinkInput::SetVideoInputFrameMemoryAllocator(obj) failed.\n", item.index );
+            printf( "[%d] IDeckLinkInput::SetVideoInputFrameMemoryAllocator(obj) failed.\n", item.callback.index );
             fflush(stdout);
         }
         else
         {
 #endif
-            printf( "[%d] IDeckLinkInput::EnableVideoInput display_mode=%s\n", item.index,
+            printf( "[%d] IDeckLinkInput::EnableVideoInput display_mode=%s\n", item.callback.index,
                                                                         DisplayModeName(item.callback.display_mode) );
             fflush(stdout);
             hr = input->EnableVideoInput(
@@ -574,17 +582,17 @@ static void ThreadFunc( void* ctx )
 
             if( FAILED(hr) )
             {
-                printf( "[%d] IDeckLinkInput::EnableVideoInput failed.\n", item.index );
+                printf( "[%d] IDeckLinkInput::EnableVideoInput failed.\n", item.callback.index );
                 fflush(stdout);
             }
             else
             {
-                printf( "[%d] IDeckLinkInput::EnableAudioInput...\n", item.index );
+                printf( "[%d] IDeckLinkInput::EnableAudioInput...\n", item.callback.index );
                 fflush(stdout);
                 hr = input->EnableAudioInput( bmdAudioSampleRate48kHz, bmdAudioSampleType32bitInteger, 16 );
                 if( FAILED(hr) )
                 {
-                    printf( "[%d] IDeckLinkInput::EnableAudioInput failed.\n", item.index );
+                    printf( "[%d] IDeckLinkInput::EnableAudioInput failed.\n", item.callback.index );
                     fflush(stdout);
                 }
                 else
@@ -594,52 +602,52 @@ static void ThreadFunc( void* ctx )
                     hr = input->SetCallback(&item.callback);
                     if( FAILED(hr) )
                     {
-                        printf( "[%d] IDeckLinkInput::SetCallback failed.\n", item.index );
+                        printf( "[%d] IDeckLinkInput::SetCallback failed.\n", item.callback.index );
                         fflush(stdout);
                     }
                     else
                     {
-                        printf( "[%d] IDeckLinkInput::StartStreams...\n", item.index );
+                        printf( "[%d] IDeckLinkInput::StartStreams...\n", item.callback.index );
                         fflush(stdout);
                         hr = input->StartStreams();
                         if( FAILED(hr) )
                         {
-                            printf( "[%d] IDeckLinkInput::StartStreams failed.\n", item.index );
+                            printf( "[%d] IDeckLinkInput::StartStreams failed.\n", item.callback.index );
                             fflush(stdout);
                         }
                         else
                         {
                             item.callback.need_restart.Wait();
 
-                            printf("[%d] IDeckLinkInput::StopStreams...\n", item.index);
+                            printf("[%d] IDeckLinkInput::StopStreams...\n", item.callback.index);
                             hr = input->StopStreams();
                             if( FAILED(hr) )
                             {
-                                printf( "[%d] IDeckLinkInput::StopStreams failed.\n", item.index );
+                                printf( "[%d] IDeckLinkInput::StopStreams failed.\n", item.callback.index );
                             }
                         }
 
-                        printf( "[%d] IDeckLinkInput::SetCallback(NULL)...\n", item.index);
+                        printf( "[%d] IDeckLinkInput::SetCallback(NULL)...\n", item.callback.index);
                         hr = input->SetCallback(NULL);
                         if( FAILED(hr) )
                         {
-                            printf( "[%d] IDeckLinkInput::SetCallback failed.\n", item.index );
+                            printf( "[%d] IDeckLinkInput::SetCallback failed.\n", item.callback.index );
                         }
                     }
 
-                    printf( "[%d] IDeckLinkInput::DisableAudioInput...\n", item.index );
+                    printf( "[%d] IDeckLinkInput::DisableAudioInput...\n", item.callback.index );
                     hr = input->DisableAudioInput();
                     if( FAILED(hr) )
                     {
-                        printf( "[%d] IDeckLinkInput::DisableAudioInput failed.\n", item.index );
+                        printf( "[%d] IDeckLinkInput::DisableAudioInput failed.\n", item.callback.index );
                     }
                 }
 
-                printf( "[%d] IDeckLinkInput::DisableVideoInput...\n", item.index );
+                printf( "[%d] IDeckLinkInput::DisableVideoInput...\n", item.callback.index );
                 hr = input->DisableVideoInput();
                 if( FAILED(hr) )
                 {
-                    printf( "[%d] IDeckLinkInput::DisableVideoInput failed.\n", item.index );
+                    printf( "[%d] IDeckLinkInput::DisableVideoInput failed.\n", item.callback.index );
                 }
             }
 
@@ -648,15 +656,15 @@ static void ThreadFunc( void* ctx )
             hr = input->SetVideoInputFrameMemoryAllocator(NULL);
             if( FAILED(hr) )
             {
-                printf( "[%d] IDeckLinkInput::SetVideoInputFrameMemoryAllocator(NULL) failed.\n", item.index );
+                printf("[%d] IDeckLinkInput::SetVideoInputFrameMemoryAllocator(NULL) failed.\n",item.callback.index);
             }
 #endif
         }
 #endif
-        printf( "[%d] IDeckLinkInput::Release...\n", item.index );
+        printf( "[%d] IDeckLinkInput::Release...\n", item.callback.index );
         input->Release();
 
-        printf( "[%d] Stopped Video+Audio Capture.\n\n", item.index );
+        printf( "[%d] Stopped Video+Audio Capture.\n\n", item.callback.index );
         item.callback.need_restart.SetFalse();
         fflush(stdout);
 
@@ -665,7 +673,7 @@ static void ThreadFunc( void* ctx )
             break;
         }
 
-        printf( "[%d] Waiting 1 sec...\n\n", item.index );
+        printf( "[%d] Waiting 1 sec...\n\n", item.callback.index );
         fflush(stdout);
         WaitSec(1);
 
@@ -740,9 +748,10 @@ int main( int argc, char* argv[] )
 
     for(  int j = 0;  j < g_items_count  &&  deckLinkIterator->Next(&deck_link) == S_OK;  ++j  )
     {
-        g_items[j].index = j;
-        g_items[j].deck_link = deck_link;
-        StartThread( &ThreadFunc, &g_items[j] );
+        CDeviceItem& item = g_items[j];
+        item.SetIndex(j);
+        item.deck_link = deck_link;
+        StartThread( &ThreadFunc, &item );
     }
 
     g_test_finished.Wait();
