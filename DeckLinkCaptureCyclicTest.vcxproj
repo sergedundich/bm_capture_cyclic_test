@@ -21,11 +21,13 @@
   <ItemGroup>
     <ClInclude Include="DeckLinkSDK\Win\include\DeckLinkAPIVersion.h" />
     <ClInclude Include="gen\DeckLinkAPI.h" />
+    <ClInclude Include="include\MemUtils.h" />
     <ClInclude Include="include\utils.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="gen\DeckLinkAPI-iid.c" />
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\MemUtils-generic.cpp" />
     <ClCompile Include="src\StartThread-win32.cpp" />
   </ItemGroup>
   <ItemGroup>
