@@ -27,7 +27,7 @@
   <ItemGroup>
     <ClCompile Include="gen\DeckLinkAPI-iid.c" />
     <ClCompile Include="src\main.cpp" />
-    <ClCompile Include="src\MemUtils-generic.cpp" />
+    <ClCompile Include="src\MemUtils-win32.cpp" />
     <ClCompile Include="src\StartThread-win32.cpp" />
   </ItemGroup>
   <ItemGroup>

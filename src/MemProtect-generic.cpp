@@ -1,31 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
-#include <new>
 #include <MemUtils.h>
-
-//=====================================================================================================================
-void* MemAlloc( size_t sz )
-{
-    void* ptr;
-
-    for(;;)
-    {
-        ptr = operator new(sz);
-
-        if( (uintptr_t)ptr % 16 == 0 )
-        {
-            return ptr;
-        }
-
-        operator delete(ptr);
-    }
-}
-
-//---------------------------------------------------------------------------------------------------------------------
-void MemFree( void* ptr )
-{
-    operator delete(ptr);
-}
 
 //=====================================================================================================================
 static const uint32_t g_magic_base = 0xf4aeac59U;

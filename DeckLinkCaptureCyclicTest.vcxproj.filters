@@ -45,7 +45,7 @@
     <ClCompile Include="src\StartThread-win32.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\MemUtils-generic.cpp">
+    <ClCompile Include="src\MemUtils-win32.cpp">
       <Filter>src</Filter>
     </ClCompile>
   </ItemGroup>
