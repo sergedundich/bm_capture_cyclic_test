@@ -536,7 +536,7 @@ static void ThreadFunc( void* ctx )
                 }
                 else
                 {
-                    printf("[%d] IDeckLinkInput::SetCallback(obj)...\n");
+                    printf( "[%d] IDeckLinkInput::SetCallback(obj)...\n", item.callback.index );
                     fflush(stdout);
                     hr = input->SetCallback(&item.callback);
                     if( FAILED(hr) )

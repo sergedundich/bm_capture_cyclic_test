@@ -42,10 +42,13 @@
     <ClCompile Include="src\main.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\StartThread-win32.cpp">
+    <ClCompile Include="src\MemAlloc-generic.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\MemUtils-win32.cpp">
+    <ClCompile Include="src\MemProtect-generic.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\StartThread-win32.cpp">
       <Filter>src</Filter>
     </ClCompile>
   </ItemGroup>
