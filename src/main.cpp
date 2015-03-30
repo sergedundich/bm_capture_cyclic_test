@@ -19,9 +19,7 @@ public:
     CWaitableCondition  need_restart;
 
 public:
-    CInputCallback() : ref_count(0), frame_count(0), signal_frame_count(0), index(-1), display_mode(bmdModeHD720p5994)
-    {
-    }
+    CInputCallback(): ref_count(0), frame_count(0), signal_frame_count(0), index(-1), display_mode(bmdModeHD720p60)  {}
 
     // overrides from IDeckLinkInputCallback
     virtual HRESULT STDMETHODCALLTYPE VideoInputFormatChanged(
@@ -193,6 +191,7 @@ HRESULT STDMETHODCALLTYPE CInputCallback::VideoInputFrameArrived(
         {
             printf( "[%d] CInputCallback::VideoInputFrameArrived: signal stopped - video_time=%lld/240000\n",
                                                                                     index,  (long long)video_time  );
+//            display_mode = bmdModeHD720p60;
             need_restart.SetTrue();
         }
 #endif
