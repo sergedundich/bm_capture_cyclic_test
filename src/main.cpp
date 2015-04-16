@@ -452,6 +452,7 @@ static CDeviceItem g_items[g_items_count];
 //---------------------------------------------------------------------------------------------------------------------
 static void ThreadFunc( void* ctx )
 {
+    unsigned long long restart_count = 0;
     CDeviceItem& item = *(CDeviceItem*)ctx;
     HRESULT hr;
     assert( item.deck_link != NULL );
@@ -487,7 +488,7 @@ static void ThreadFunc( void* ctx )
 
     while( g_thread_count > VALIDATION_RESERVE )
     {
-        printf( "\n[%d] Starting Video+Audio Capture...\n", item.callback.index );
+        printf( "\n[%d] Starting Video+Audio Capture #%llu...\n", item.callback.index, restart_count++ );
 
         IDeckLinkInput* input;
         printf( "[%d] IDeckLink::QueryInterface(IID_IDeckLinkInput)...\n", item.callback.index );
@@ -615,6 +616,7 @@ static void ThreadFunc( void* ctx )
         fflush(stdout);
         WaitSec(1);
 
+#ifndef DISABLE_CUSTOM_ALLOCATOR
         if( !item.alloc.Reset() )
         {
             fflush(stdout);
@@ -627,6 +629,7 @@ static void ThreadFunc( void* ctx )
 
             break;
         }
+#endif
     }
 
     if( Int32AtomicAdd( &g_thread_count, -1 ) <= 1 )
